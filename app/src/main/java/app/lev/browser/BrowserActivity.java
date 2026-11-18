@@ -527,7 +527,7 @@ public class BrowserActivity extends Activity {
         if (prompt.getVisibility() == View.VISIBLE && promptBase != null) updatePromptCount();
     }
 
-    private void setProgress(int p) {
+    private void setPageProgress(int p) {
         if (p >= 100) {
             progress.animate().scaleX(1f).setDuration(120).withEndAction(() ->
                     progress.animate().alpha(0f).setDuration(220).start()).start();
@@ -1012,7 +1012,7 @@ public class BrowserActivity extends Activity {
 
         @Override
         public void onProgressChanged(WebView view, int p) {
-            if (t == cur) setProgress(p);
+            if (t == cur) setPageProgress(p);
         }
 
         @Override
