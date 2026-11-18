@@ -1,2 +1,14 @@
-# Lev
-Lev - minimal Android browser: ad and tracker blocking, YouTube in background, page translation
+# Лев — минималистичный браузер для Android
+
+- Адресная строка снизу, как в Edge; вкладки стопкой с мягкой вибрацией.
+- Начальная страница: два поиска и ваши сайты (меняются долгим нажатием).
+- Блокировка рекламы и трекеров (EasyList, EasyPrivacy, RuAdList, Fanboy Notifications…),
+  на новом сайте браузер спрашивает: блокировать или разрешить.
+- YouTube в фоне и плеер в шторке; реклама на YouTube убирается.
+- Тёмная тема на всех сайтах.
+- Перевод страниц: на телефоне (Google ML Kit) или через сайт Google/Яндекс Переводчика.
+- Без истории, без сохранения паролей и карт. Входы на сайтах остаются.
+- «Удалить все данные» не трогает YouTube — он вас помнит.
+
+Сборка: GitHub Actions (`.github/workflows/build.yml`) собирает APK и выкладывает его в Releases.
+Скачать последнюю версию: `releases/latest/download/Lev.apk`.
