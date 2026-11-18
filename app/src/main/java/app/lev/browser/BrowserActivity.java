@@ -1636,6 +1636,8 @@ public class BrowserActivity extends Activity {
             saveTabs();
             recreate();
         });
+        menuItem(panel, R.drawable.ic_reload, "Обновить браузер", "сборка " + Updater.currentBuild(this), Ui.text,
+                () -> Updater.check(this));
         menuItem(panel, R.drawable.ic_trash, "Удалить все данные", null, Ui.danger, this::confirmWipe);
         View line = new View(c);
         line.setBackgroundColor(Ui.line);
