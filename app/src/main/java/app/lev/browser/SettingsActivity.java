@@ -114,6 +114,8 @@ public class SettingsActivity extends Activity {
         row("Закрывать неактивные вкладки", () -> daysName(Prefs.tabExpireDays()), this::pickExpire);
 
         section("Начальный экран");
+        toggle("Погода вверху", "Данные Open-Meteo, без регистрации", WeatherView.K_ON, true);
+        row("Город для погоды", WeatherView::summary, () -> WeatherView.pickCity(this, this::recreate));
         row("Фон", () -> HomeView.WALLPAPER_NAMES[Math.min(Prefs.wallpaper(), HomeView.WALLPAPER_NAMES.length - 1)],
                 this::pickWallpaper);
         row("Ярлыки сайтов", () -> "Долгое нажатие на ярлык — изменить или удалить. Нажмите, чтобы вернуть стандартные",
@@ -134,7 +136,7 @@ public class SettingsActivity extends Activity {
         toggle("Звук при листании вкладок", null, "sound", false);
 
         section("О браузере");
-        row("Лев 1.0", () -> "Без истории, без рекламы, без лишнего. Перевод на телефоне — Google ML Kit.", null);
+        row("Лев, сборка " + Updater.currentBuild(this), () -> "Без истории, без рекламы, без лишнего. Перевод на телефоне — Google ML Kit.", null);
     }
 
     // ------------------------------------------------------------- строки
