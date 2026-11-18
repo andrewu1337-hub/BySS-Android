@@ -42,6 +42,7 @@ final class HomeView extends FrameLayout {
     private final LinearLayout grid;
     private final TextView badge1, badge2;
     private final EditText search1, search2;
+    private final WeatherView weather;
     private List<Shortcuts.Item> items;
 
     HomeView(Context c, Listener l) {
@@ -58,6 +59,12 @@ final class HomeView extends FrameLayout {
         int side = Ui.dp(c, 22);
         col.setPadding(side, 0, side, 0);
         addView(col, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+
+        weather = new WeatherView(c);
+        LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        wlp.topMargin = Ui.dp(c, 26);
+        col.addView(weather, wlp);
 
         col.addView(new View(c), new LinearLayout.LayoutParams(1, 0, 0.85f));
 
@@ -136,6 +143,7 @@ final class HomeView extends FrameLayout {
     void refresh() {
         Context c = getContext();
         setBackgroundColor(Ui.bg);
+        weather.refresh();
         int w = Prefs.wallpaper();
         int res = (w >= 0 && w < WALLPAPERS.length) ? WALLPAPERS[w] : 0;
         if (res != 0) {
