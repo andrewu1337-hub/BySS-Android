@@ -47,7 +47,8 @@
             </intent-filter>
         </activity>
 
-        <!-- Значок приложения: золотой или белый лев (переключается в настройках) -->
+        <!-- Значок приложения (переключается в настройках). Имена alias не меняем —
+             иначе значок на экране «Домой» пропадёт после обновления. -->
         <activity-alias
             android:name="app.lev.browser.IconGold"
             android:enabled="true"
@@ -65,9 +66,35 @@
             android:name="app.lev.browser.IconWhite"
             android:enabled="false"
             android:exported="true"
-            android:icon="@mipmap/ic_launcher_white"
+            android:icon="@mipmap/ic_launcher_shield_gold"
             android:label="@string/app_name"
-            android:roundIcon="@mipmap/ic_launcher_white"
+            android:roundIcon="@mipmap/ic_launcher_shield_gold"
+            android:targetActivity=".BrowserActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="app.lev.browser.IconLionGold"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_lion_gold"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_launcher_lion_gold"
+            android:targetActivity=".BrowserActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="app.lev.browser.IconLionWhite"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_lion_white"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_launcher_lion_white"
             android:targetActivity=".BrowserActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

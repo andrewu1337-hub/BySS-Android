@@ -57,6 +57,7 @@ final class HomeView extends FrameLayout {
     private final View shade;
     private final LinearLayout col;
     private final LinearLayout grid;
+    private final android.widget.ImageButton plus;
     private final TextView[] badges = new TextView[3];
     private final EditText[] fields = new EditText[3];
     private final WeatherView weather1, weather2;
@@ -90,7 +91,9 @@ final class HomeView extends FrameLayout {
         weather1 = new WeatherView(c, 1);
         weather2 = new WeatherView(c, 2);
         weathers.addView(weather1, new LinearLayout.LayoutParams(-2, -2));
-        weathers.addView(weather2, new LinearLayout.LayoutParams(-2, -2));
+        LinearLayout.LayoutParams w2 = new LinearLayout.LayoutParams(-2, -2);
+        w2.topMargin = Ui.dp(c, 16); // чуть больше воздуха между двумя городами
+        weathers.addView(weather2, w2);
         top.addView(weathers, new LinearLayout.LayoutParams(0, -2, 1f));
         LinearLayout brandBox = new LinearLayout(c);
         brandBox.setOrientation(LinearLayout.HORIZONTAL);
@@ -118,11 +121,26 @@ final class HomeView extends FrameLayout {
             wire(badges[i], fields[i], i + 1);
         }
 
-        col.addView(new View(c), new LinearLayout.LayoutParams(1, Ui.dp(c, 28)));
+        col.addView(new View(c), new LinearLayout.LayoutParams(1, Ui.dp(c, 46)));
         grid = new LinearLayout(c);
         grid.setOrientation(LinearLayout.VERTICAL);
         col.addView(grid, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
+        // «+» — отдельно, ровно по центру под сайтами, без плитки и обводки
+        plus = Ui.iconButton(c, R.drawable.ic_plus);
+        plus.setBackground(Ui.borderlessRipple());
+        plus.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        int ip = Ui.dp(c, 14);
+        plus.setPadding(ip, ip, ip, ip);
+        plus.setContentDescription("Добавить сайт");
+        plus.setOnClickListener(v -> {
+            Haptics.click(v);
+            edit(-1);
+        });
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(Ui.dp(c, 54), Ui.dp(c, 54));
+        plp.gravity = Gravity.CENTER_HORIZONTAL;
+        plp.topMargin = Ui.dp(c, 4);
+        col.addView(plus, plp);
         col.addView(new View(c), new LinearLayout.LayoutParams(1, 0, 1.4f));
 
         refresh();
@@ -284,8 +302,9 @@ final class HomeView extends FrameLayout {
         grid.removeAllViews();
         items = Shortcuts.load();
         int shown = Math.min(items.size(), MAX_CELLS);
-        boolean plus = shown < MAX_CELLS;
-        int total = shown + (plus ? 1 : 0);
+        plus.setVisibility(shown < MAX_CELLS ? VISIBLE : GONE);
+        plus.setColorFilter(Ui.text);
+        int total = shown;
         LinearLayout row = null;
         for (int i = 0; i < total; i++) {
             if (i % COLS == 0) {
@@ -294,7 +313,7 @@ final class HomeView extends FrameLayout {
                 grid.addView(row, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT));
             }
-            View cell = i < shown ? tile(c, items.get(i), i) : addTile(c);
+            View cell = tile(c, items.get(i), i);
             row.addView(cell, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         }
         if (row != null) {
@@ -337,13 +356,19 @@ final class HomeView extends FrameLayout {
         float r = Ui.dp(c, TILE * 0.24f);
         FrameLayout icon = new FrameLayout(c);
         squircle(icon, r);
-        icon.setElevation(Ui.dp(c, 2));
+        icon.setElevation(Ui.dark ? 0 : Ui.dp(c, 2));
         String glyph = it.glyph == null || it.glyph.isEmpty() ? Shortcuts.glyphFor(it.title) : it.glyph;
         TextView letter = Ui.glyphTile(c, glyph, TILE, 20);
         letter.setElevation(0);
-        letter.setTextColor(0xFFFFFFFF);
-        letter.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{SiteIcons.colorFor(SiteIcons.host(it.url)), darker(SiteIcons.colorFor(SiteIcons.host(it.url)))}));
+        int tint = SiteIcons.colorFor(SiteIcons.host(it.url));
+        if (Ui.dark) { // тёмная тема: чёрная плитка, буква цветная
+            letter.setTextColor(tint);
+            letter.setBackgroundColor(0xFF000000);
+        } else {
+            letter.setTextColor(0xFFFFFFFF);
+            letter.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{tint, darker(tint)}));
+        }
         icon.addView(letter, new LayoutParams(-1, -1));
         ImageView img = new ImageView(c);
         img.setVisibility(GONE);
@@ -370,34 +395,26 @@ final class HomeView extends FrameLayout {
         return 0xFF000000 | ((r * 3 / 4) << 16) | ((g * 3 / 4) << 8) | (b * 3 / 4);
     }
 
-    /** Крупный значок сайта — на всю плитку; маленький — по центру на белом, как веб-ярлыки iOS. */
+    /**
+     * Крупный значок сайта — на всю плитку; маленький — по центру, как веб-ярлыки iOS.
+     * В тёмной теме плитка чёрная: белый фон значка убираем, цветной — делаем чёрным.
+     */
     private static void showIcon(ImageView img, TextView letter, Bitmap b) {
         if (b == null) return;
-        img.setImageBitmap(b);
+        boolean dk = Ui.dark;
+        int bg = dk ? 0xFF000000 : 0xFFFFFFFF;
+        img.setImageBitmap(dk ? SiteIcons.onBlack(b) : b);
         img.setVisibility(VISIBLE);
         if (b.getWidth() >= 96) {
             img.setScaleType(ImageView.ScaleType.CENTER_CROP);
             img.setPadding(0, 0, 0, 0);
-            img.setBackgroundColor(0xFFFFFFFF);
         } else {
             img.setScaleType(ImageView.ScaleType.FIT_CENTER);
             int p = Ui.dp(img.getContext(), 11);
             img.setPadding(p, p, p, p);
-            img.setBackgroundColor(0xFFFFFFFF);
         }
+        img.setBackgroundColor(bg);
         letter.setVisibility(GONE);
-    }
-
-    private View addTile(Context c) {
-        TextView icon = Ui.glyphTile(c, "+", TILE, 24);
-        icon.setTextColor(Ui.text2);
-        icon.setBackground(Ui.round(Ui.dark ? 0x26FFFFFF : 0x14000000, Ui.dp(c, TILE * 0.24f)));
-        icon.setElevation(0);
-        icon.setOnClickListener(v -> {
-            Haptics.click(v);
-            edit(-1);
-        });
-        return cellShell(c, icon, "Добавить");
     }
 
     /** Добавить (index == -1) или изменить ярлык. */

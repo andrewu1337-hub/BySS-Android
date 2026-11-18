@@ -131,7 +131,7 @@ public class SettingsActivity extends Activity {
                 () -> choose("Шторка сверху", BAR_NAMES, Prefs.statusBar(), w -> Prefs.put("status_bar", w)));
 
         section("Значок");
-        row("Значок приложения", () -> Icons.BUILT_IN[Icons.currentBuiltIn(this)], () ->
+        row("Значок приложения", () -> Icons.currentName(this), () ->
                 choose("Значок приложения", Icons.BUILT_IN, Icons.currentBuiltIn(this), w -> {
                     Icons.setBuiltIn(this, w);
                     Toast.makeText(this, "Значок поменяется через пару секунд. Если пропал с экрана — "
@@ -569,7 +569,7 @@ public class SettingsActivity extends Activity {
             iv.setPadding(pd, pd, pd, pd);
             iv.setOnClickListener(v -> {
                 dlg[0].dismiss();
-                if (b != null) Icons.pin(this, b);
+                if (b != null) Icons.pin(this, b, f);
             });
             iv.setOnLongClickListener(v -> {
                 dlg[0].dismiss();
@@ -626,7 +626,7 @@ public class SettingsActivity extends Activity {
                         }
                         new AlertDialog.Builder(this).setTitle("Значок сохранён")
                                 .setMessage("Поставить его на главный экран сейчас?")
-                                .setPositiveButton("Поставить", (d2, w2) -> Icons.pin(this, icon))
+                                .setPositiveButton("Поставить", (d2, w2) -> Icons.pin(this, icon, f))
                                 .setNegativeButton("Позже", null).show();
                     })
                     .setNegativeButton("Отмена", null).show();

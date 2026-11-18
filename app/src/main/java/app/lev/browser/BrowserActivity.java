@@ -151,6 +151,7 @@ public class BrowserActivity extends Activity {
         translator = new PageTranslator(this, asset("js/translate.js"));
 
         buildUi();
+        setupEdgeToEdge();
         applyStatusBar();
         restoreTabs();
         boolean opened = handleIntent(getIntent());
@@ -205,6 +206,7 @@ public class BrowserActivity extends Activity {
         home.refresh();
         applyStatusBar();
         updateBars();
+        Icons.applyTask(this);
     }
 
     @Override
@@ -282,9 +284,12 @@ public class BrowserActivity extends Activity {
         root.setFocusable(true);
         root.setFocusableInTouchMode(true);
 
-        LinearLayout column = new LinearLayout(c);
+        column = new LinearLayout(c);
         column.setOrientation(LinearLayout.VERTICAL);
         root.addView(column, new FrameLayout.LayoutParams(-1, -1));
+        // своя полоска под шторкой: её цвет плавно меняем сами (обычная / цвет сайта / прозрачная)
+        sbar = new View(c);
+        root.addView(sbar, new FrameLayout.LayoutParams(-1, 0, Gravity.TOP));
 
         swipe = new SwipeRefreshLayout(c);
         swipe.setColorSchemeColors(Ui.text);
@@ -719,11 +724,9 @@ public class BrowserActivity extends Activity {
             t.web.onResume();
         }
         hidePrompt();
-        if (Prefs.statusBar() == 1) {
-            pageColor = 0;
-            if (!t.isHome()) readPageColor(t);
-            applyStatusBar();
-        }
+        pageColor = 0;
+        if (!t.isHome() && Prefs.statusBar() != 0) readPageColor(t);
+        applyStatusBar();
         updateBars();
         saveTabs();
     }
@@ -1101,7 +1104,7 @@ public class BrowserActivity extends Activity {
             t.url = url;
             t.title = view.getTitle();
             swipe.setRefreshing(false);
-            if (t == cur && Prefs.statusBar() == 1) readPageColor(t);
+            if (t == cur && Prefs.statusBar() != 0) readPageColor(t);
             if (t == cur) {
                 updateBars();
                 maybePrompt(t);
@@ -1328,7 +1331,8 @@ public class BrowserActivity extends Activity {
         } else {
             //noinspection deprecation
             getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
-                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
         }
     }
 
@@ -1342,7 +1346,8 @@ public class BrowserActivity extends Activity {
             if (c != null) c.show(WindowInsets.Type.systemBars());
         } else {
             //noinspection deprecation
-            getWindow().getDecorView().setSystemUiVisibility(0);
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
         }
         WebChromeClient.CustomViewCallback cb = fsCallback;
         fsCallback = null;
@@ -2243,48 +2248,94 @@ public class BrowserActivity extends Activity {
 
     private int pageColor;
     private android.animation.ValueAnimator barAnim;
+    private LinearLayout column;
+    private View sbar;
+    private int barColor;
+    private int insetTop, insetBottom, insetLeft, insetRight;
 
-    private int statusBarHeight() {
-        int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
-        return id > 0 ? getResources().getDimensionPixelSize(id) : Ui.dp(this, 24);
+    /**
+     * Окно рисуется и под шторкой — так мы сами решаем, что там видно: цвет браузера,
+     * цвет сайта или сама страница (как в Google Maps). Клавиатуру и нижнюю полоску учитываем сами.
+     */
+    @SuppressWarnings("deprecation")
+    private void setupEdgeToEdge() {
+        android.view.Window w = getWindow();
+        w.setStatusBarColor(0x00000000);
+        if (Build.VERSION.SDK_INT >= 30) {
+            w.setDecorFitsSystemWindows(false);
+        } else {
+            w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        }
+        root.setOnApplyWindowInsetsListener((v, ins) -> {
+            int top, bottom, left, right;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets sb = ins.getInsets(WindowInsets.Type.statusBars());
+                android.graphics.Insets bars = ins.getInsets(WindowInsets.Type.systemBars()
+                        | WindowInsets.Type.displayCutout());
+                android.graphics.Insets ime = ins.getInsets(WindowInsets.Type.ime());
+                top = sb.top;
+                bottom = Math.max(bars.bottom, ime.bottom);
+                left = bars.left;
+                right = bars.right;
+            } else {
+                top = ins.getSystemWindowInsetTop();
+                bottom = ins.getSystemWindowInsetBottom();
+                left = ins.getSystemWindowInsetLeft();
+                right = ins.getSystemWindowInsetRight();
+            }
+            if (top != insetTop || bottom != insetBottom || left != insetLeft || right != insetRight) {
+                insetTop = top;
+                insetBottom = bottom;
+                insetLeft = left;
+                insetRight = right;
+                root.setPadding(left, 0, right, bottom);
+                applyStatusBar();
+            }
+            return Build.VERSION.SDK_INT >= 30 ? WindowInsets.CONSUMED : ins.consumeSystemWindowInsets();
+        });
+        root.requestApplyInsets();
     }
 
-    /** 0 — как фон браузера, 1 — цвет сайта (плавно), 2 — прозрачная, страница под шторкой. */
-    @SuppressWarnings("deprecation")
+    /** 0 — как фон браузера, 1 — мягкая: цвет сайта (на главной — без полосы), 2 — прозрачная. */
     void applyStatusBar() {
+        if (column == null || sbar == null) return;
         int mode = Prefs.statusBar();
-        android.view.Window w = getWindow();
-        View d = w.getDecorView();
-        int flags = d.getSystemUiVisibility()
-                & ~(View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-        if (mode == 2) {
-            flags |= View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
-            if (barAnim != null) barAnim.cancel();
-            w.setStatusBarColor(0x00000000);
-            lightIcons(!Ui.dark);
-        } else {
-            int target = mode == 1 && cur != null && !cur.isHome() && pageColor != 0 ? pageColor : Ui.bg;
-            animateBar(target);
+        boolean onHome = cur == null || cur.isHome();
+        boolean under = mode == 2 || (mode == 1 && onHome);
+        if (column.getPaddingTop() != (under ? 0 : insetTop)) column.setPadding(0, under ? 0 : insetTop, 0, 0);
+        if (home != null) home.setTopInset(under ? insetTop : 0);
+        if (stack != null && stack.getPaddingTop() != insetTop) stack.setPadding(0, insetTop, 0, 0);
+        ViewGroup.LayoutParams lp = sbar.getLayoutParams();
+        if (lp.height != insetTop) {
+            lp.height = insetTop;
+            sbar.setLayoutParams(lp);
         }
-        d.setSystemUiVisibility(flags);
-        int inset = mode == 2 ? statusBarHeight() : 0;
-        if (home != null) home.setTopInset(inset);
-        if (stack != null) stack.setPadding(0, inset, 0, 0);
+        int target = under ? 0 : (mode == 1 && !onHome && pageColor != 0 ? pageColor : Ui.bg);
+        animateBar(target);
+        boolean lightBar;
+        if (!under) lightBar = luminance(target) > 0.6;
+        else if (onHome) lightBar = !Ui.dark;
+        else lightBar = pageColor != 0 ? luminance(pageColor) > 0.6 : !Ui.dark;
+        lightIcons(lightBar);
+    }
+
+    private void setBar(int c) {
+        barColor = c;
+        sbar.setBackgroundColor(c);
     }
 
     private void animateBar(int target) {
-        android.view.Window w = getWindow();
-        int from = w.getStatusBarColor();
+        int from = barColor;
         if (barAnim != null) barAnim.cancel();
         if (from == target || Ui.anim(300) == 0) {
-            w.setStatusBarColor(target);
+            setBar(target);
         } else {
             barAnim = android.animation.ValueAnimator.ofArgb(from, target);
             barAnim.setDuration(Ui.anim(320));
-            barAnim.addUpdateListener(a -> w.setStatusBarColor((Integer) a.getAnimatedValue()));
+            barAnim.addUpdateListener(a -> setBar((Integer) a.getAnimatedValue()));
             barAnim.start();
         }
-        lightIcons(luminance(target) > 0.6);
     }
 
     @SuppressWarnings("deprecation")
@@ -2315,7 +2366,7 @@ public class BrowserActivity extends Activity {
             int col = parseCss(v == null ? "" : v.replace("\"", ""));
             if (col == 0 || (Ui.dark && luminance(col) > 0.45)) col = Ui.bg;
             pageColor = col;
-            if (t == cur && Prefs.statusBar() == 1) animateBar(col);
+            if (t == cur && Prefs.statusBar() != 0) applyStatusBar();
         });
     }
 

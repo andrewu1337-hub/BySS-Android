@@ -223,6 +223,56 @@ def launcher(suffix, pal):
                 '</adaptive-icon>\n')
 
 
-launcher("", lion_facets.GOLD)          # по умолчанию — золотой
-launcher("_white", lion_facets.WHITE)
-print("drawables:", len(ICONS) + 11 + 4)
+launcher("_lion_gold", lion_facets.GOLD)    # гранёные львы — на выбор в настройках
+launcher("_lion_white", lion_facets.WHITE)
+
+
+# ------------------------------------------------------------- launcher (лев на щите)
+# Рисунок владельца (лев на щите), переведённый в вектор: tools/lion_shield.txt —
+# по одному куску контура на строку (у каждого куска свои дыры, поэтому evenOdd).
+def shield_paths():
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lion_shield.txt")) as f:
+        return [ln.strip() for ln in f if ln.strip()]
+
+
+def shield(suffix, gold):
+    paths = shield_paths()
+    aapt = ' xmlns:aapt="http://schemas.android.com/aapt"' if gold else ''
+    head = (f'<?xml version="1.0" encoding="utf-8"?>\n<vector {NS}{aapt} android:width="108dp" '
+            'android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">\n')
+    fg, mono = [head], [head]
+    for d in paths:
+        if gold:
+            fg.append('  <path android:fillType="evenOdd" android:pathData="' + d + '">\n'
+                      '    <aapt:attr name="android:fillColor">\n'
+                      '      <gradient android:type="linear" android:startX="54" android:startY="20" '
+                      'android:endX="54" android:endY="88">\n'
+                      '        <item android:offset="0" android:color="#FFFFE7A3" />\n'
+                      '        <item android:offset="0.5" android:color="#FFE2B45C" />\n'
+                      '        <item android:offset="1" android:color="#FFA8701F" />\n'
+                      '      </gradient>\n    </aapt:attr>\n  </path>\n')
+        else:
+            fg.append('  <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" '
+                      'android:pathData="' + d + '" />\n')
+        mono.append('  <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" '
+                    'android:pathData="' + d + '" />\n')
+    fg.append('</vector>\n')
+    mono.append('</vector>\n')
+    write("ic_launcher_fg" + suffix, "".join(fg))
+    if not gold:
+        write("ic_launcher_mono", "".join(mono))  # один монохромный на оба цвета
+    with open(os.path.join(RES, "mipmap-anydpi-v26", "ic_launcher" + suffix + ".xml"), "w") as f:
+        f.write(f'<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon {NS}>\n'
+                '    <background android:drawable="@color/icon_bg" />\n'
+                f'    <foreground android:drawable="@drawable/ic_launcher_fg{suffix}" />\n'
+                '    <monochrome android:drawable="@drawable/ic_launcher_mono" />\n'
+                '</adaptive-icon>\n')
+
+
+shield("", False)               # по умолчанию — белый лев на щите
+shield("_shield_gold", True)
+
+# пустой значок для заставки при запуске (Android 12+): ни один «чужой» значок не мелькает
+write("splash_blank", f'<?xml version="1.0" encoding="utf-8"?>\n<shape {NS} android:shape="rectangle">\n'
+      '    <solid android:color="#00000000" />\n    <size android:width="1dp" android:height="1dp" />\n</shape>\n')
+print("drawables:", len(ICONS) + 11 + 7)

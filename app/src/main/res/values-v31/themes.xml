@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Заставка при запуске (Android 12+): без значка, чтобы не мелькал не тот, что на экране «Домой» -->
+    <style name="Theme.Lev.Dark" parent="Base.Lev.Dark">
+        <item name="android:windowSplashScreenBackground">@color/dark_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_blank</item>
+    </style>
+    <style name="Theme.Lev.Light" parent="Base.Lev.Light">
+        <item name="android:windowSplashScreenBackground">@color/light_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_blank</item>
+    </style>
+</resources>

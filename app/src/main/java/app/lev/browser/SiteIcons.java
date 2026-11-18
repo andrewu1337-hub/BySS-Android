@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.LruCache;
@@ -208,6 +209,182 @@ final class SiteIcons {
         int n;
         while ((n = in.read(buf)) > 0 && out.size() < max) out.write(buf, 0, n);
         return out.toByteArray();
+    }
+
+    // ------------------------------------------------------------ тёмная тема: значки на чёрном
+
+    private static final LruCache<Bitmap, Bitmap> dark = new LruCache<>(32);
+
+    /**
+     * Значок для чёрной плитки. Белый фон значка убираем (рисунок остаётся как есть),
+     * цветной фон (красный у Яндекса) становится чёрным, а белая буква — цвета этого фона.
+     * Чёрный рисунок, который потерялся бы на чёрном, делаем светлым.
+     */
+    static Bitmap onBlack(Bitmap src) {
+        if (src == null) return null;
+        Bitmap hit = dark.get(src);
+        if (hit != null) return hit;
+        try {
+            Bitmap b = src;
+            if (Build.VERSION.SDK_INT >= 26 && b.getConfig() == Bitmap.Config.HARDWARE) {
+                b = b.copy(Bitmap.Config.ARGB_8888, false);
+            }
+            int big = Math.max(b.getWidth(), b.getHeight());
+            if (big > 256) {
+                b = Bitmap.createScaledBitmap(b, Math.max(1, b.getWidth() * 256 / big),
+                        Math.max(1, b.getHeight() * 256 / big), true);
+            }
+            Bitmap out = blackTile(b);
+            dark.put(src, out);
+            return out;
+        } catch (Throwable e) {
+            return src;
+        }
+    }
+
+    private static float lum(float r, float g, float b) {
+        return (r * 299 + g * 587 + b * 114) / 1000f;
+    }
+
+    private static float sat(float r, float g, float b) {
+        float mx = Math.max(r, Math.max(g, b)), mn = Math.min(r, Math.min(g, b));
+        return mx <= 0 ? 0 : (mx - mn) / mx;
+    }
+
+    private static Bitmap blackTile(Bitmap b) {
+        int w = b.getWidth(), h = b.getHeight(), n = w * h;
+        int[] px = new int[n];
+        b.getPixels(px, 0, w, 0, 0, w, h);
+
+        // фон — по краям значка
+        int edge = 2 * (w + h);
+        int[] idx = new int[edge];
+        int e = 0;
+        for (int x = 0; x < w; x++) {
+            idx[e++] = x;
+            idx[e++] = (h - 1) * w + x;
+        }
+        for (int y = 0; y < h; y++) {
+            idx[e++] = y * w;
+            idx[e++] = y * w + w - 1;
+        }
+        int[] rr = new int[edge], gg = new int[edge], bb = new int[edge];
+        int m = 0, clear = 0;
+        for (int i = 0; i < edge; i++) {
+            int c = px[idx[i]];
+            if ((c >>> 24) < 128) {
+                clear++;
+            } else {
+                rr[m] = (c >> 16) & 0xFF;
+                gg[m] = (c >> 8) & 0xFF;
+                bb[m] = c & 0xFF;
+                m++;
+            }
+        }
+        char mode;
+        float bgR = 0, bgG = 0, bgB = 0;
+        if (m == 0 || clear > edge * 0.4f) {
+            mode = 'T'; // фон уже прозрачный
+        } else {
+            java.util.Arrays.sort(rr, 0, m);
+            java.util.Arrays.sort(gg, 0, m);
+            java.util.Arrays.sort(bb, 0, m);
+            bgR = rr[m / 2];
+            bgG = gg[m / 2];
+            bgB = bb[m / 2];
+            float L = lum(bgR, bgG, bgB), S = sat(bgR, bgG, bgB);
+            mode = S < 0.18f && L > 170 ? 'L' : (L < 50 ? 'D' : 'C');
+        }
+
+        final float T = 64f, D0 = 14f;
+        float[] dist = new float[n];
+        boolean[] region = new boolean[n];
+        if (mode != 'T') {
+            for (int i = 0; i < n; i++) {
+                int c = px[i];
+                float dr = ((c >> 16) & 0xFF) - bgR, dg = ((c >> 8) & 0xFF) - bgG, db = (c & 0xFF) - bgB;
+                dist[i] = (float) Math.sqrt(dr * dr + dg * dg + db * db);
+            }
+            if (mode == 'C') {
+                // цветной фон убираем везде — и внутри букв тоже
+                for (int i = 0; i < n; i++) region[i] = dist[i] < T;
+            } else {
+                // белый/чёрный фон — только тот, что связан с краем: белое внутри рисунка остаётся
+                int[] q = new int[n];
+                int head = 0, tail = 0;
+                for (int i = 0; i < edge; i++) {
+                    int j = idx[i];
+                    if (!region[j] && dist[j] < T) {
+                        region[j] = true;
+                        q[tail++] = j;
+                    }
+                }
+                while (head < tail) {
+                    int i = q[head++];
+                    int x = i % w, y = i / w;
+                    if (x > 0 && !region[i - 1] && dist[i - 1] < T) { region[i - 1] = true; q[tail++] = i - 1; }
+                    if (x < w - 1 && !region[i + 1] && dist[i + 1] < T) { region[i + 1] = true; q[tail++] = i + 1; }
+                    if (y > 0 && !region[i - w] && dist[i - w] < T) { region[i - w] = true; q[tail++] = i - w; }
+                    if (y < h - 1 && !region[i + w] && dist[i + w] < T) { region[i + w] = true; q[tail++] = i + w; }
+                }
+            }
+        }
+
+        // 1) убрать фон, мягко по краям (возвращаем исходный цвет рисунка)
+        float[] fr = new float[n], fg = new float[n], fb = new float[n], fa = new float[n];
+        int lightAch = 0;
+        for (int i = 0; i < n; i++) {
+            int c = px[i];
+            float r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, bl = c & 0xFF, a = c >>> 24;
+            if (region[i]) {
+                float k = Math.max(0f, Math.min(1f, (dist[i] - D0) / (T - D0)));
+                if (k < 0.02f) {
+                    fa[i] = 0;
+                    continue;
+                }
+                r = Math.max(0, Math.min(255, (r - (1 - k) * bgR) / k));
+                g = Math.max(0, Math.min(255, (g - (1 - k) * bgG) / k));
+                bl = Math.max(0, Math.min(255, (bl - (1 - k) * bgB) / k));
+                a *= k;
+            }
+            fr[i] = r;
+            fg[i] = g;
+            fb[i] = bl;
+            fa[i] = a;
+            if (mode == 'C' && a > 20 && sat(r, g, bl) < 0.25f && lum(r, g, bl) >= 110) lightAch++;
+        }
+        boolean hasLight = lightAch > n / 100;
+
+        // 2) перекрасить, чтобы на чёрном было видно
+        int[] res = new int[n];
+        for (int i = 0; i < n; i++) {
+            float a = fa[i];
+            if (a <= 0) continue;
+            float r = fr[i], g = fg[i], bl = fb[i];
+            float l = lum(r, g, bl), s = sat(r, g, bl);
+            if (mode == 'C') {
+                if (a > 20 && s < 0.25f) {
+                    if (l >= 110 || !hasLight) {
+                        r = bgR;
+                        g = bgG;
+                        bl = bgB;
+                    } else {
+                        r = 255;
+                        g = 255;
+                        bl = 255;
+                    }
+                }
+            } else if (s < 0.2f && l < 80) {
+                r = g = bl = 255 - l; // чёрный рисунок → светлый
+            } else if (l < 70) {
+                float f = Math.min(90f / Math.max(l, 1f), 3f); // тёмный цветной → чуть светлее
+                r = Math.min(255, r * f);
+                g = Math.min(255, g * f);
+                bl = Math.min(255, bl * f);
+            }
+            res[i] = (Math.round(a) << 24) | (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(bl);
+        }
+        return Bitmap.createBitmap(res, w, h, Bitmap.Config.ARGB_8888);
     }
 
     /** Яркий цвет для плитки без значка — свой для каждого сайта (как на iOS). */

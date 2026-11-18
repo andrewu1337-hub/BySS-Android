@@ -31,6 +31,7 @@ final class Prefs {
     static boolean dark() { return b("dark", true); }
     static int wallpaper() { return i("wallpaper", 0); }
     static int appIcon() { return i("app_icon", 0); }
+    static String customIcon() { return s("custom_icon", ""); }
     /** Название браузера (надпись на главной, ярлыки, тексты). */
     static String browserName() {
         String n = s("name", "BySS").trim();

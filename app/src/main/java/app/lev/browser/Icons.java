@@ -23,7 +23,8 @@ import java.util.List;
 
 /**
  * Значки браузера.
- * 1) Встроенные львы (золотой, белый) — меняют сам значок приложения (через activity-alias).
+ * 1) Встроенные: лев на щите (белый, золотой) и гранёные львы — меняют сам значок приложения
+ *    (через activity-alias). Имена alias не меняем, чтобы значок на экране «Домой» не пропадал.
  * 2) «Мои значки» — любая картинка из галереи: ставим на чисто чёрный фон, тёмный рисунок
  *    делаем белым или золотым. Хранятся только на телефоне, ставятся ярлыком на главный экран.
  */
@@ -31,8 +32,10 @@ final class Icons {
 
     private Icons() { }
 
-    static final String[] BUILT_IN = {"Золотой лев", "Белый лев"};
-    private static final String[] ALIASES = {"app.lev.browser.IconGold", "app.lev.browser.IconWhite"};
+    static final String[] BUILT_IN = {"Лев на щите", "Лев на щите, золотой", "Гранёный лев, золотой",
+            "Гранёный лев, белый"};
+    private static final String[] ALIASES = {"app.lev.browser.IconGold", "app.lev.browser.IconWhite",
+            "app.lev.browser.IconLionGold", "app.lev.browser.IconLionWhite"};
 
     static int currentBuiltIn(Context c) {
         PackageManager pm = c.getPackageManager();
@@ -57,6 +60,64 @@ final class Icons {
                     PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
         }
         Prefs.put("app_icon", which);
+        Prefs.put("custom_icon", "");
+    }
+
+    /** Название значка для настроек: встроенный или свой (ярлык). */
+    static String currentName(Context c) {
+        String f = Prefs.customIcon();
+        if (!f.isEmpty() && new File(f).exists()) return "Свой значок (ярлык)";
+        return BUILT_IN[currentBuiltIn(c)];
+    }
+
+    private static String taskPath;
+    private static Bitmap taskIcon;
+
+    /**
+     * В «Недавних приложениях» показываем имя браузера и свой значок, если он выбран, —
+     * чтобы при открытии не мелькал другой.
+     */
+    @SuppressWarnings("deprecation")
+    static void applyTask(android.app.Activity a) {
+        try {
+            String path = Prefs.customIcon();
+            Bitmap icon = null;
+            if (!path.isEmpty()) {
+                if (path.equals(taskPath) && taskIcon != null) {
+                    icon = taskIcon;
+                } else {
+                    File f = new File(path);
+                    Bitmap b = f.exists() ? load(f) : null;
+                    if (b != null) {
+                        icon = circle(b);
+                        taskPath = path;
+                        taskIcon = icon;
+                    }
+                }
+            }
+            String name = Prefs.browserName();
+            a.setTaskDescription(icon != null ? new android.app.ActivityManager.TaskDescription(name, icon)
+                    : new android.app.ActivityManager.TaskDescription(name));
+        } catch (Exception ignored) {
+            // не критично
+        }
+    }
+
+    /** Видимая часть адаптивного значка (72 из 108 dp), обрезанная кругом. */
+    private static Bitmap circle(Bitmap b) {
+        int s = Math.min(b.getWidth(), b.getHeight());
+        int vis = Math.round(s * 72f / 108f);
+        int off = (s - vis) / 2;
+        int out = 192;
+        Bitmap r = Bitmap.createBitmap(out, out, Bitmap.Config.ARGB_8888);
+        Canvas cv = new Canvas(r);
+        android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG
+                | android.graphics.Paint.FILTER_BITMAP_FLAG);
+        cv.drawCircle(out / 2f, out / 2f, out / 2f, p);
+        p.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN));
+        cv.drawBitmap(b, new android.graphics.Rect(off, off, off + vis, off + vis),
+                new android.graphics.Rect(0, 0, out, out), p);
+        return r;
     }
 
     // ------------------------------------------------------------ мои значки
@@ -217,7 +278,7 @@ final class Icons {
     }
 
     /** Поставить значок на главный экран (ярлык «BySS» с этой картинкой). */
-    static void pin(Context c, Bitmap icon) {
+    static void pin(Context c, Bitmap icon, File file) {
         ShortcutManager sm = c.getSystemService(ShortcutManager.class);
         if (sm == null || !sm.isRequestPinShortcutSupported()) {
             Toast.makeText(c, "Ваш экран «Домой» не поддерживает значки приложений", Toast.LENGTH_LONG).show();
@@ -230,6 +291,10 @@ final class Icons {
                 .setIntent(launch)
                 .build();
         sm.requestPinShortcut(si, null);
+        if (file != null) {
+            Prefs.put("custom_icon", file.getAbsolutePath());
+            if (c instanceof android.app.Activity) applyTask((android.app.Activity) c);
+        }
         Toast.makeText(c, "Подтвердите добавление значка. Старый значок можно убрать с экрана — "
                 + "браузер останется в списке приложений.", Toast.LENGTH_LONG).show();
     }
