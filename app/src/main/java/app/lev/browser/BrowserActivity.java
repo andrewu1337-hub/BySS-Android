@@ -1493,11 +1493,11 @@ public class BrowserActivity extends Activity {
     private void maybePrompt(Tab t) {
         if (t != cur || !Prefs.adblock() || !Prefs.askSites() || t.pageHost == null) return;
         String base = AdBlocker.baseDomain(t.pageHost);
-        if (SitePrefs.hasDecision(t.space, t.pageHost) || base.equals(promptDismissed)) return;
         if (base.equals(promptBase) && prompt.getVisibility() == View.VISIBLE) {
             updatePromptCount();
             return;
         }
+        if (SitePrefs.hasDecision(t.space, t.pageHost) || base.equals(promptDismissed)) return;
         showPrompt(t, base);
     }
 
@@ -1506,6 +1506,8 @@ public class BrowserActivity extends Activity {
     private void showPrompt(Tab t, String base) {
         Context c = this;
         promptBase = base;
+        // спрашиваем про сайт один раз: пока не ответили — трекеры блокируются, и больше не спросим
+        SitePrefs.set(t.space, t.pageHost, false);
         prompt.removeAllViews();
         prompt.setPadding(Ui.dp(c, 16), Ui.dp(c, 12), Ui.dp(c, 8), Ui.dp(c, 10));
         prompt.setBackground(Ui.round(Ui.card, Ui.dp(c, 22)));
@@ -1600,21 +1602,63 @@ public class BrowserActivity extends Activity {
     // ===================================================== перевод: предложение
 
     /** Сайты, где в этот запуск нажали «Нет» / «Перевести» (тогда дальше переводим сами). */
-    private final java.util.Set<String> trDeclined = new java.util.HashSet<>();
-    private final java.util.Set<String> trAccepted = new java.util.HashSet<>();
 
     private static boolean isTranslatorHost(String h) {
         return h.endsWith("translate.goog") || h.contains("translate.yandex") || h.startsWith("translate.google.");
     }
 
     /** Страница не на русском и не на английском — предложить перевод. */
+    // ============================================================ текст страницы
+
+    /**
+     * Весь текст страницы в окне, где его можно выделить и скопировать как есть — с русскими буквами
+     * (в отличие от «Выбрать» в недавних приложениях: там Android распознаёт картинку и путает буквы).
+     */
+    private void pageText() {
+        if (cur == null || cur.web == null || cur.isHome()) return;
+        Tab t = cur;
+        t.web.evaluateJavascript("(function(){var s=(document.body&&document.body.innerText)||'';"
+                + "return s.length>60000?s.slice(0,60000):s})()", v -> {
+            String text;
+            try {
+                text = new org.json.JSONArray("[" + v + "]").getString(0);
+            } catch (Exception e) {
+                text = "";
+            }
+            text = text.replaceAll("[ \\t]+\\n", "\n").replaceAll("\n{3,}", "\n\n").trim();
+            if (text.isEmpty()) {
+                Toast.makeText(this, "На странице нет текста", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            final String all = text;
+            TextView tv = Ui.text(this, all, 15, Ui.text, false);
+            tv.setTextIsSelectable(true);
+            tv.setLineSpacing(0, 1.15f);
+            int p = Ui.dp(this, 20);
+            tv.setPadding(p, Ui.dp(this, 4), p, p);
+            android.widget.ScrollView sv = new android.widget.ScrollView(this);
+            sv.addView(tv);
+            new AlertDialog.Builder(this)
+                    .setTitle("Выделите нужный текст")
+                    .setView(sv)
+                    .setPositiveButton("Скопировать всё", (d, w) -> {
+                        android.content.ClipboardManager cm = getSystemService(android.content.ClipboardManager.class);
+                        if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Текст страницы", all));
+                        Toast.makeText(this, "Текст скопирован", Toast.LENGTH_SHORT).show();
+                    })
+                    .setNegativeButton("Закрыть", null)
+                    .show();
+        });
+    }
+
     private void maybeOfferTranslate(Tab t) {
         if (!Prefs.offerTranslate() || t.isHome() || t.translated || t.web == null || t.pageHost == null) return;
         String h = t.pageHost.toLowerCase(Locale.ROOT);
         if (isTranslatorHost(h) || Profiles.isYouTube(h)) return;
         String base = AdBlocker.baseDomain(h);
-        if (trDeclined.contains(base)) return;
-        boolean auto = trAccepted.contains(base) && "device".equals(Prefs.translateMode());
+        int choice = SitePrefs.translate(t.space, base);
+        if (choice < 0) return; // сказали «нет» — для этого сайта больше не предлагаем
+        boolean auto = choice > 0 && "device".equals(Prefs.translateMode());
         if (!auto && base.equals(t.langChecked)) return;
         t.langChecked = base;
         String page = t.url;
@@ -1634,7 +1678,7 @@ public class BrowserActivity extends Activity {
     }
 
     private void showTranslateOffer(Tab t, String lang, String base, String page) {
-        if (t != cur || t.translated || !page.equals(t.url) || trDeclined.contains(base)) return;
+        if (t != cur || t.translated || !page.equals(t.url) || SitePrefs.translate(t.space, base) < 0) return;
         Context c = this;
         promptBase = null;
         prompt.removeAllViews();
@@ -1657,7 +1701,7 @@ public class BrowserActivity extends Activity {
         ImageButton x = Ui.iconButton(c, R.drawable.ic_close);
         x.setImageTintList(ColorStateList.valueOf(Ui.text2));
         x.setOnClickListener(v -> {
-            trDeclined.add(base);
+            SitePrefs.setTranslate(t.space, base, false);
             hidePrompt();
         });
         top.addView(x, new LinearLayout.LayoutParams(Ui.dp(c, 40), Ui.dp(c, 40)));
@@ -1670,13 +1714,13 @@ public class BrowserActivity extends Activity {
         TextView no = pillButton(c, "Нет", false);
         no.setOnClickListener(v -> {
             Haptics.click(v);
-            trDeclined.add(base);
+            SitePrefs.setTranslate(t.space, base, false);
             hidePrompt();
         });
         TextView yes = pillButton(c, "Перевести", true);
         yes.setOnClickListener(v -> {
             Haptics.click(v);
-            trAccepted.add(base);
+            SitePrefs.setTranslate(t.space, base, true);
             hidePrompt();
             translator.translate(t, Prefs.translateMode());
         });
@@ -1801,6 +1845,7 @@ public class BrowserActivity extends Activity {
             items.add(new Object[]{R.drawable.ic_translate, translated ? "Показать оригинал" : "Перевести страницу", null,
                     (Runnable) () -> toggleTranslate(Prefs.translateMode())});
             items.add(new Object[]{R.drawable.ic_screenshot, "Длинный скриншот", null, (Runnable) this::longScreenshot});
+            items.add(new Object[]{R.drawable.ic_copy, "Выделить и скопировать текст", null, (Runnable) this::pageText});
         }
         items.add(new Object[]{R.drawable.ic_reload, "Обновить браузер", null, (Runnable) () -> Updater.check(this)});
         items.add(new Object[]{R.drawable.ic_download, "Скачанные файлы", null, (Runnable) () -> {
