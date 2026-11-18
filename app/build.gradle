@@ -10,8 +10,9 @@ android {
         applicationId = 'app.lev.browser'
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = '1.0'
+        // Номер сборки GitHub = номер версии: по нему браузер понимает, что есть обновление.
+        versionCode = (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+        versionName = '1.0.' + (System.getenv('GITHUB_RUN_NUMBER') ?: '0')
     }
 
     // Постоянный ключ подписи: новые версии ставятся поверх старой.
