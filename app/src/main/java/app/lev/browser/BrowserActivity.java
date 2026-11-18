@@ -454,8 +454,10 @@ public class BrowserActivity extends Activity {
             if (cur != null && cur.web != null && cur.web.canGoForward()) cur.web.goForward();
         });
         ImageButton plus = Ui.iconButton(c, R.drawable.ic_plus);
+        Ui.heartButton(plus);
         plus.setOnClickListener(v -> {
             Haptics.click(v);
+            Ui.heart(v);
             plusTab();
         });
         tabsBtn = new TextView(c);
@@ -724,9 +726,13 @@ public class BrowserActivity extends Activity {
             t.web.onResume();
         }
         hidePrompt();
-        pageColor = 0;
-        if (!t.isHome() && Prefs.statusBar() != 0) readPageColor(t);
+        Integer known = tabColor.get(t);
+        pageColor = known != null ? known : 0;
         applyStatusBar();
+        if (!t.isHome() && Prefs.statusBar() != 0) {
+            scheduleSample(60);
+            barHandler.postDelayed(() -> scheduleSample(0), 450);
+        }
         updateBars();
         saveTabs();
     }
@@ -805,6 +811,7 @@ public class BrowserActivity extends Activity {
         closeMenu();
         if (cur != null) captureThumb(cur);
         stack.show(spaceTabs(), cur);
+        lightIcons(!Ui.dark); // над вкладками — значки шторки под цвет темы
     }
 
     private File thumbFile(Tab t) {
@@ -946,6 +953,10 @@ public class BrowserActivity extends Activity {
         t.ytProfile = Profiles.YT.equals(profile);
         w.setBackgroundColor(Ui.bg);
         w.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
+        w.setOnScrollChangeListener((v, x, y, ox, oy) -> {
+            int mode = Prefs.statusBar();
+            if (t == cur && mode != 0) scheduleSample(mode == 2 ? 90 : 220); // шапка сайта меняет цвет при прокрутке
+        });
 
         WebSettings s = w.getSettings();
         s.setJavaScriptEnabled(true);
@@ -1104,12 +1115,20 @@ public class BrowserActivity extends Activity {
             t.url = url;
             t.title = view.getTitle();
             swipe.setRefreshing(false);
-            if (t == cur && Prefs.statusBar() != 0) readPageColor(t);
+            if (t == cur && Prefs.statusBar() != 0) {
+                scheduleSample(30);
+                barHandler.postDelayed(() -> scheduleSample(0), 700); // шапка сайта иногда дорисовывается позже
+            }
             if (t == cur) {
                 updateBars();
                 maybePrompt(t);
                 maybeOfferTranslate(t);
             }
+        }
+
+        @Override
+        public void onPageCommitVisible(WebView view, String url) {
+            if (t == cur && Prefs.statusBar() != 0) scheduleSample(20); // цвет — как только страница видна
         }
 
         @Override
@@ -1147,6 +1166,7 @@ public class BrowserActivity extends Activity {
         @Override
         public void onProgressChanged(WebView view, int p) {
             if (t == cur) setPageProgress(p);
+            if (t == cur && p >= 35 && Prefs.statusBar() != 0) scheduleSample(120);
         }
 
         @Override
@@ -2302,7 +2322,9 @@ public class BrowserActivity extends Activity {
         if (column == null || sbar == null) return;
         int mode = Prefs.statusBar();
         boolean onHome = cur == null || cur.isHome();
-        boolean under = mode == 2 || (mode == 1 && onHome);
+        // под шторку уходит только главная (фон-картинка); сайт всегда ниже часов и значков —
+        // иначе он залезает под время и батарею. Цвет полосы — точно как верх страницы.
+        boolean under = mode != 0 && onHome;
         if (column.getPaddingTop() != (under ? 0 : insetTop)) column.setPadding(0, under ? 0 : insetTop, 0, 0);
         if (home != null) home.setTopInset(under ? insetTop : 0);
         if (stack != null && stack.getPaddingTop() != insetTop) stack.setPadding(0, insetTop, 0, 0);
@@ -2311,13 +2333,9 @@ public class BrowserActivity extends Activity {
             lp.height = insetTop;
             sbar.setLayoutParams(lp);
         }
-        int target = under ? 0 : (mode == 1 && !onHome && pageColor != 0 ? pageColor : Ui.bg);
-        animateBar(target);
-        boolean lightBar;
-        if (!under) lightBar = luminance(target) > 0.6;
-        else if (onHome) lightBar = !Ui.dark;
-        else lightBar = pageColor != 0 ? luminance(pageColor) > 0.6 : !Ui.dark;
-        lightIcons(lightBar);
+        int target = under ? 0 : (mode != 0 && !onHome && pageColor != 0 ? pageColor : Ui.bg);
+        animateBar(target, mode == 2 ? 0 : (mode == 1 ? 200 : 300));
+        lightIcons(under ? !Ui.dark : luminance(target) > 0.6);
     }
 
     private void setBar(int c) {
@@ -2325,14 +2343,14 @@ public class BrowserActivity extends Activity {
         sbar.setBackgroundColor(c);
     }
 
-    private void animateBar(int target) {
+    private void animateBar(int target, long ms) {
         int from = barColor;
         if (barAnim != null) barAnim.cancel();
-        if (from == target || Ui.anim(300) == 0) {
+        if (from == target || ms == 0 || Ui.anim(ms) == 0) {
             setBar(target);
         } else {
             barAnim = android.animation.ValueAnimator.ofArgb(from, target);
-            barAnim.setDuration(Ui.anim(320));
+            barAnim.setDuration(Ui.anim(ms));
             barAnim.addUpdateListener(a -> setBar((Integer) a.getAnimatedValue()));
             barAnim.start();
         }
@@ -2357,6 +2375,78 @@ public class BrowserActivity extends Activity {
         return (0.299 * ((c >> 16) & 0xFF) + 0.587 * ((c >> 8) & 0xFF) + 0.114 * (c & 0xFF)) / 255.0;
     }
 
+    private final Handler barHandler = new Handler(Looper.getMainLooper());
+    private final java.util.WeakHashMap<Tab, Integer> tabColor = new java.util.WeakHashMap<>();
+    private boolean samplePending;
+    private final Runnable sampleRun = () -> {
+        samplePending = false;
+        sampleBar(cur);
+    };
+
+    private void scheduleSample(long delay) {
+        if (samplePending) return;
+        samplePending = true;
+        barHandler.postDelayed(sampleRun, delay);
+    }
+
+    /**
+     * Цвет верха страницы — прямо с экрана (полоска пикселей под шторкой). Так полоса совпадает
+     * с сайтом один в один, даже когда сайт затемнён тёмной темой, и без ожидания загрузки.
+     */
+    private void sampleBar(Tab t) {
+        if (t == null || t != cur || t.isHome() || t.web == null || Prefs.statusBar() == 0) return;
+        if (stack != null && stack.getVisibility() == View.VISIBLE) return;
+        if (overlay != null && overlay.getVisibility() == View.VISIBLE) return;
+        WebView web = t.web;
+        if (web.getWidth() < 8 || web.getHeight() < 8 || !web.isAttachedToWindow()) return;
+        int[] loc = new int[2];
+        web.getLocationInWindow(loc);
+        android.graphics.Rect src = new android.graphics.Rect(loc[0], loc[1] + 1, loc[0] + web.getWidth(), loc[1] + 4);
+        Bitmap bm = Bitmap.createBitmap(48, 3, Bitmap.Config.ARGB_8888);
+        try {
+            android.view.PixelCopy.request(getWindow(), src, bm, res -> {
+                if (t != cur) return;
+                if (res != android.view.PixelCopy.SUCCESS) {
+                    readPageColor(t);
+                    return;
+                }
+                int col = dominant(bm);
+                if (col == 0) return;
+                tabColor.put(t, col);
+                if (col != pageColor) {
+                    pageColor = col;
+                    applyStatusBar();
+                }
+            }, barHandler);
+        } catch (Exception e) {
+            readPageColor(t);
+        }
+    }
+
+    /** Самый частый цвет полоски (мелкие детали вроде логотипа не в счёт). */
+    private static int dominant(Bitmap bm) {
+        int n = bm.getWidth() * bm.getHeight();
+        int[] px = new int[n];
+        bm.getPixels(px, 0, bm.getWidth(), 0, 0, bm.getWidth(), bm.getHeight());
+        java.util.HashMap<Integer, int[]> buckets = new java.util.HashMap<>();
+        int[] best = null;
+        for (int c : px) {
+            int key = ((c >> 19) & 0x1F) << 10 | ((c >> 11) & 0x1F) << 5 | ((c >> 3) & 0x1F);
+            int[] acc = buckets.get(key);
+            if (acc == null) {
+                acc = new int[4];
+                buckets.put(key, acc);
+            }
+            acc[0]++;
+            acc[1] += (c >> 16) & 0xFF;
+            acc[2] += (c >> 8) & 0xFF;
+            acc[3] += c & 0xFF;
+            if (best == null || acc[0] > best[0]) best = acc;
+        }
+        if (best == null || best[0] == 0) return 0;
+        return 0xFF000000 | ((best[1] / best[0]) << 16) | ((best[2] / best[0]) << 8) | (best[3] / best[0]);
+    }
+
     /** Цвет сайта: theme-color или фон страницы. В тёмной теме светлые сайты затемняются — берём чёрный. */
     private void readPageColor(Tab t) {
         if (t.web == null) return;
@@ -2365,8 +2455,9 @@ public class BrowserActivity extends Activity {
                 + "return c||''})()", v -> {
             int col = parseCss(v == null ? "" : v.replace("\"", ""));
             if (col == 0 || (Ui.dark && luminance(col) > 0.45)) col = Ui.bg;
+            if (t != cur) return;
             pageColor = col;
-            if (t == cur && Prefs.statusBar() != 0) applyStatusBar();
+            if (Prefs.statusBar() != 0) applyStatusBar();
         });
     }
 

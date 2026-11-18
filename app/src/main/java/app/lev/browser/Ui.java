@@ -132,4 +132,93 @@ final class Ui {
         t.setElevation(dp(c, 2));
         return t;
     }
+
+    // ------------------------------------------------------------ сердечко на «+»
+
+    /** Кнопка «+» без серого круга: при нажатии из неё вылетает сердечко. */
+    static void heartButton(View v) {
+        v.setBackground(null);
+    }
+
+    /** Сердечко из центра кнопки: появляется, чуть растёт, всплывает и тает. */
+    static void heart(View anchor) {
+        long dur = anim(560);
+        if (dur == 0) return;
+        View rootView = anchor.getRootView();
+        if (!(rootView instanceof android.view.ViewGroup)) return;
+        android.view.ViewGroup vg = (android.view.ViewGroup) rootView;
+        int[] a = new int[2], r = new int[2];
+        anchor.getLocationInWindow(a);
+        vg.getLocationInWindow(r);
+        final float cx = a[0] - r[0] + anchor.getWidth() / 2f;
+        final float cy = a[1] - r[1] + anchor.getHeight() / 2f;
+        final float base = dp(anchor.getContext(), 13);
+        final float rise = dp(anchor.getContext(), 34);
+        final Heart d = new Heart(0xFFFF375F);
+        vg.getOverlay().add(d);
+        android.animation.ValueAnimator va = android.animation.ValueAnimator.ofFloat(0f, 1f);
+        va.setDuration(dur);
+        va.setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f));
+        va.addUpdateListener(an -> {
+            float t = (Float) an.getAnimatedValue();
+            float pop = t < 0.25f ? 0.55f + 0.75f * (t / 0.25f) : 1.3f - 0.15f * ((t - 0.25f) / 0.75f);
+            float s = base * pop;
+            float y = cy - rise * t;
+            d.setBounds(Math.round(cx - s), Math.round(y - s), Math.round(cx + s), Math.round(y + s));
+            d.setAlpha(Math.round(255 * (t < 0.35f ? 1f : 1f - (t - 0.35f) / 0.65f)));
+            vg.invalidate();
+        });
+        va.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+                vg.getOverlay().remove(d);
+            }
+        });
+        va.start();
+    }
+
+    private static final class Heart extends Drawable {
+        private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Path unit = new android.graphics.Path();
+        private final android.graphics.Path path = new android.graphics.Path();
+        private final android.graphics.Matrix m = new android.graphics.Matrix();
+
+        Heart(int color) {
+            paint.setColor(color);
+            unit.moveTo(0.5f, 0.92f);
+            unit.cubicTo(0.5f, 0.92f, 0.04f, 0.62f, 0.04f, 0.33f);
+            unit.cubicTo(0.04f, 0.15f, 0.17f, 0.05f, 0.31f, 0.05f);
+            unit.cubicTo(0.41f, 0.05f, 0.47f, 0.11f, 0.5f, 0.18f);
+            unit.cubicTo(0.53f, 0.11f, 0.59f, 0.05f, 0.69f, 0.05f);
+            unit.cubicTo(0.83f, 0.05f, 0.96f, 0.15f, 0.96f, 0.33f);
+            unit.cubicTo(0.96f, 0.62f, 0.5f, 0.92f, 0.5f, 0.92f);
+            unit.close();
+        }
+
+        @Override
+        public void draw(android.graphics.Canvas canvas) {
+            android.graphics.Rect b = getBounds();
+            m.setScale(b.width(), b.height());
+            m.postTranslate(b.left, b.top);
+            unit.transform(m, path);
+            canvas.drawPath(path, paint);
+        }
+
+        @Override
+        public void setAlpha(int alpha) {
+            paint.setAlpha(alpha);
+            invalidateSelf();
+        }
+
+        @Override
+        public void setColorFilter(android.graphics.ColorFilter cf) {
+            paint.setColorFilter(cf);
+        }
+
+        @SuppressWarnings("deprecation")
+        @Override
+        public int getOpacity() {
+            return android.graphics.PixelFormat.TRANSLUCENT;
+        }
+    }
 }

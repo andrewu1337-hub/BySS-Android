@@ -255,8 +255,9 @@ final class SiteIcons {
         int w = b.getWidth(), h = b.getHeight(), n = w * h;
         int[] px = new int[n];
         b.getPixels(px, 0, w, 0, 0, w, h);
+        boolean[] clear = new boolean[n];
+        for (int i = 0; i < n; i++) clear[i] = (px[i] >>> 24) < 128;
 
-        // фон — по краям значка
         int edge = 2 * (w + h);
         int[] idx = new int[edge];
         int e = 0;
@@ -268,13 +269,50 @@ final class SiteIcons {
             idx[e++] = y * w;
             idx[e++] = y * w + w - 1;
         }
-        int[] rr = new int[edge], gg = new int[edge], bb = new int[edge];
-        int m = 0, clear = 0;
+
+        // 1) прозрачное поле вокруг рисунка (связанное с краем)
+        boolean[] region = new boolean[n];
+        int[] q = new int[n];
+        int head = 0, tail = 0, clearEdge = 0;
         for (int i = 0; i < edge; i++) {
-            int c = px[idx[i]];
-            if ((c >>> 24) < 128) {
-                clear++;
-            } else {
+            int j = idx[i];
+            if (clear[j]) {
+                clearEdge++;
+                if (!region[j]) {
+                    region[j] = true;
+                    q[tail++] = j;
+                }
+            }
+        }
+        while (head < tail) {
+            int i = q[head++];
+            int x = i % w, y = i / w;
+            if (x > 0 && clear[i - 1] && !region[i - 1]) { region[i - 1] = true; q[tail++] = i - 1; }
+            if (x < w - 1 && clear[i + 1] && !region[i + 1]) { region[i + 1] = true; q[tail++] = i + 1; }
+            if (y > 0 && clear[i - w] && !region[i - w]) { region[i - w] = true; q[tail++] = i - w; }
+            if (y < h - 1 && clear[i + w] && !region[i + w]) { region[i + w] = true; q[tail++] = i + w; }
+        }
+        boolean outside = tail > 0;
+
+        // 2) цвет фона: края значка, а если вокруг прозрачно — «подложка» (белый круг или квадрат)
+        int[] rr = new int[n], gg = new int[n], bb = new int[n];
+        int m = 0;
+        if (outside) {
+            for (int i = 0; i < n; i++) {
+                if (clear[i]) continue;
+                int x = i % w, y = i / w;
+                boolean rim = (x > 0 && region[i - 1]) || (x < w - 1 && region[i + 1])
+                        || (y > 0 && region[i - w]) || (y < h - 1 && region[i + w]);
+                if (!rim) continue;
+                int c = px[i];
+                rr[m] = (c >> 16) & 0xFF;
+                gg[m] = (c >> 8) & 0xFF;
+                bb[m] = c & 0xFF;
+                m++;
+            }
+        } else {
+            for (int k = 0; k < edge; k++) {
+                int c = px[idx[k]];
                 rr[m] = (c >> 16) & 0xFF;
                 gg[m] = (c >> 8) & 0xFF;
                 bb[m] = c & 0xFF;
@@ -283,8 +321,8 @@ final class SiteIcons {
         }
         char mode;
         float bgR = 0, bgG = 0, bgB = 0;
-        if (m == 0 || clear > edge * 0.4f) {
-            mode = 'T'; // фон уже прозрачный
+        if (m == 0) {
+            mode = 'T';
         } else {
             java.util.Arrays.sort(rr, 0, m);
             java.util.Arrays.sort(gg, 0, m);
@@ -293,12 +331,14 @@ final class SiteIcons {
             bgG = gg[m / 2];
             bgB = bb[m / 2];
             float L = lum(bgR, bgG, bgB), S = sat(bgR, bgG, bgB);
-            mode = S < 0.18f && L > 170 ? 'L' : (L < 50 ? 'D' : 'C');
+            if (S < 0.18f && L > 170) mode = 'L';          // белый фон или белая подложка
+            else if (L < 50) mode = 'D';                   // чёрный фон
+            else if (clearEdge > edge * 0.4f) mode = 'T';  // цветной круг на прозрачном — оставляем
+            else mode = 'C';                               // цветной фон (Яндекс)
         }
 
-        final float T = 64f, D0 = 14f;
+        final float T = mode == 'L' ? 88f : 64f, D0 = mode == 'L' ? 18f : 14f;
         float[] dist = new float[n];
-        boolean[] region = new boolean[n];
         if (mode != 'T') {
             for (int i = 0; i < n; i++) {
                 int c = px[i];
@@ -307,13 +347,14 @@ final class SiteIcons {
             }
             if (mode == 'C') {
                 // цветной фон убираем везде — и внутри букв тоже
-                for (int i = 0; i < n; i++) region[i] = dist[i] < T;
+                for (int i = 0; i < n; i++) if (dist[i] < T) region[i] = true;
             } else {
-                // белый/чёрный фон — только тот, что связан с краем: белое внутри рисунка остаётся
-                int[] q = new int[n];
-                int head = 0, tail = 0;
-                for (int i = 0; i < edge; i++) {
-                    int j = idx[i];
+                // белый/чёрный фон — только связанный с краем: белое внутри рисунка остаётся
+                head = 0;
+                tail = 0;
+                for (int i = 0; i < n; i++) if (region[i]) q[tail++] = i;
+                for (int k = 0; k < edge; k++) {
+                    int j = idx[k];
                     if (!region[j] && dist[j] < T) {
                         region[j] = true;
                         q[tail++] = j;
@@ -322,21 +363,21 @@ final class SiteIcons {
                 while (head < tail) {
                     int i = q[head++];
                     int x = i % w, y = i / w;
-                    if (x > 0 && !region[i - 1] && dist[i - 1] < T) { region[i - 1] = true; q[tail++] = i - 1; }
-                    if (x < w - 1 && !region[i + 1] && dist[i + 1] < T) { region[i + 1] = true; q[tail++] = i + 1; }
-                    if (y > 0 && !region[i - w] && dist[i - w] < T) { region[i - w] = true; q[tail++] = i - w; }
-                    if (y < h - 1 && !region[i + w] && dist[i + w] < T) { region[i + w] = true; q[tail++] = i + w; }
+                    if (x > 0) tail = grow(i - 1, region, clear, dist, T, q, tail);
+                    if (x < w - 1) tail = grow(i + 1, region, clear, dist, T, q, tail);
+                    if (y > 0) tail = grow(i - w, region, clear, dist, T, q, tail);
+                    if (y < h - 1) tail = grow(i + w, region, clear, dist, T, q, tail);
                 }
             }
         }
 
-        // 1) убрать фон, мягко по краям (возвращаем исходный цвет рисунка)
+        // 3) убрать фон, мягко по краям (возвращаем исходный цвет рисунка)
         float[] fr = new float[n], fg = new float[n], fb = new float[n], fa = new float[n];
         int lightAch = 0;
         for (int i = 0; i < n; i++) {
             int c = px[i];
             float r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, bl = c & 0xFF, a = c >>> 24;
-            if (region[i]) {
+            if (mode != 'T' && region[i] && dist[i] < T) {
                 float k = Math.max(0f, Math.min(1f, (dist[i] - D0) / (T - D0)));
                 if (k < 0.02f) {
                     fa[i] = 0;
@@ -355,7 +396,7 @@ final class SiteIcons {
         }
         boolean hasLight = lightAch > n / 100;
 
-        // 2) перекрасить, чтобы на чёрном было видно
+        // 4) перекрасить, чтобы на чёрном было видно
         int[] res = new int[n];
         for (int i = 0; i < n; i++) {
             float a = fa[i];
@@ -374,17 +415,20 @@ final class SiteIcons {
                         bl = 255;
                     }
                 }
-            } else if (s < 0.2f && l < 80) {
-                r = g = bl = 255 - l; // чёрный рисунок → светлый
-            } else if (l < 70) {
-                float f = Math.min(90f / Math.max(l, 1f), 3f); // тёмный цветной → чуть светлее
-                r = Math.min(255, r * f);
-                g = Math.min(255, g * f);
-                bl = Math.min(255, bl * f);
+            } else if (Math.max(r, Math.max(g, bl)) < 120) {
+                r = g = bl = 245; // тёмный рисунок (чёрный, тёмно-фиолетовый) → белый; яркий красный не трогаем
             }
             res[i] = (Math.round(a) << 24) | (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(bl);
         }
         return Bitmap.createBitmap(res, w, h, Bitmap.Config.ARGB_8888);
+    }
+
+    private static int grow(int j, boolean[] region, boolean[] clear, float[] dist, float t, int[] q, int tail) {
+        if (!region[j] && (clear[j] || dist[j] < t)) {
+            region[j] = true;
+            q[tail++] = j;
+        }
+        return tail;
     }
 
     /** Яркий цвет для плитки без значка — свой для каждого сайта (как на iOS). */

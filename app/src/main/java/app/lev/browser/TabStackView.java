@@ -94,12 +94,13 @@ final class TabStackView extends FrameLayout {
 
         // «+» по центру снизу, без рамки и тени
         ImageButton plus = Ui.iconButton(c, R.drawable.ic_plus);
-        plus.setBackground(Ui.borderlessRipple());
+        Ui.heartButton(plus);
         plus.setScaleType(ImageView.ScaleType.FIT_CENTER);
         int ip = Ui.dp(c, 14);
         plus.setPadding(ip, ip, ip, ip);
         plus.setOnClickListener(v -> {
             Haptics.click(v);
+            Ui.heart(v);
             listener.onNewTab();
         });
         LayoutParams pp = new LayoutParams(Ui.dp(c, 56), Ui.dp(c, 56), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
@@ -146,6 +147,7 @@ final class TabStackView extends FrameLayout {
             setVisibility(GONE);
             setAlpha(1f);
             if (after != null) after.run();
+            if (getContext() instanceof BrowserActivity) ((BrowserActivity) getContext()).applyStatusBar();
         }).start();
     }
 

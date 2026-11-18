@@ -145,7 +145,7 @@ public class SettingsActivity extends Activity {
     }
 
     private static final String[] BAR_NAMES = {"Как фон браузера", "Мягкая: цвет сайта, плавно",
-            "Прозрачная: страница под шторкой"};
+            "Прозрачная: сливается с сайтом, сразу"};
 
     private void home() {
         section("Фон");

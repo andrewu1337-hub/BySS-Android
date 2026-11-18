@@ -109,7 +109,7 @@ final class HomeView extends FrameLayout {
         tlp.topMargin = Ui.dp(c, 18);
         col.addView(top, tlp);
 
-        col.addView(new View(c), new LinearLayout.LayoutParams(1, 0, 0.75f));
+        col.addView(new View(c), new LinearLayout.LayoutParams(1, 0, 0.2f));
 
         for (int i = 0; i < 3; i++) {
             LinearLayout row = searchRow(c);
@@ -121,29 +121,53 @@ final class HomeView extends FrameLayout {
             wire(badges[i], fields[i], i + 1);
         }
 
-        col.addView(new View(c), new LinearLayout.LayoutParams(1, Ui.dp(c, 46)));
-        grid = new LinearLayout(c);
-        grid.setOrientation(LinearLayout.VERTICAL);
-        col.addView(grid, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
-        // «+» — отдельно, ровно по центру под сайтами, без плитки и обводки
+        // Под поиском: «+» ровно посередине между поиском и нижней строкой, сайты — под ним.
+        // Сколько бы ни было рядов сайтов (1–3), «+» стоит на месте (если не помещается — чуть выше).
         plus = Ui.iconButton(c, R.drawable.ic_plus);
-        plus.setBackground(Ui.borderlessRipple());
+        Ui.heartButton(plus);
         plus.setScaleType(ImageView.ScaleType.FIT_CENTER);
         int ip = Ui.dp(c, 14);
         plus.setPadding(ip, ip, ip, ip);
         plus.setContentDescription("Добавить сайт");
         plus.setOnClickListener(v -> {
             Haptics.click(v);
+            Ui.heart(v);
             edit(-1);
         });
+        LinearLayout block = new LinearLayout(c);
+        block.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(Ui.dp(c, 54), Ui.dp(c, 54));
         plp.gravity = Gravity.CENTER_HORIZONTAL;
-        plp.topMargin = Ui.dp(c, 4);
-        col.addView(plus, plp);
-        col.addView(new View(c), new LinearLayout.LayoutParams(1, 0, 1.4f));
+        block.addView(plus, plp);
+        grid = new LinearLayout(c);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        glp.topMargin = Ui.dp(c, 10);
+        block.addView(grid, glp);
+        FrameLayout lower = new Lower(c);
+        lower.addView(block, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        col.addView(lower, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
         refresh();
+    }
+
+    /** Место под поиском: «+» — по центру по высоте, сайты — под ним. */
+    private final class Lower extends FrameLayout {
+        Lower(Context c) {
+            super(c);
+        }
+
+        @Override
+        protected void onLayout(boolean changed, int l, int t, int r, int b) {
+            if (getChildCount() == 0) return;
+            View v = getChildAt(0);
+            int h = b - t, bh = v.getMeasuredHeight(), bw = v.getMeasuredWidth();
+            int top = plus.getVisibility() == VISIBLE ? h / 2 - plus.getMeasuredHeight() / 2 : (h - bh) / 2;
+            top = Math.max(0, Math.min(top, h - bh - Ui.dp(getContext(), 6)));
+            int left = (r - l - bw) / 2;
+            v.layout(left, top, left + bw, top + bh);
+        }
     }
 
     // Погода обновляется раз в 10 минут, пока начальный экран на виду
