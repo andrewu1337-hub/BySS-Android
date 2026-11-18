@@ -121,8 +121,8 @@ final class HomeView extends FrameLayout {
             wire(badges[i], fields[i], i + 1);
         }
 
-        // Под поиском: «+» ровно посередине между поиском и нижней строкой, сайты — под ним.
-        // Сколько бы ни было рядов сайтов (1–3), «+» стоит на месте (если не помещается — чуть выше).
+        // Под поиском: сайты и «+» под ними — одним блоком ровно посередине между поиском
+        // и нижней строкой. Сколько бы ни было рядов сайтов (1–3), блок всегда по центру.
         plus = Ui.iconButton(c, R.drawable.ic_plus);
         Ui.heartButton(plus);
         plus.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -136,15 +136,14 @@ final class HomeView extends FrameLayout {
         });
         LinearLayout block = new LinearLayout(c);
         block.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(Ui.dp(c, 54), Ui.dp(c, 54));
-        plp.gravity = Gravity.CENTER_HORIZONTAL;
-        block.addView(plus, plp);
         grid = new LinearLayout(c);
         grid.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        glp.topMargin = Ui.dp(c, 10);
-        block.addView(grid, glp);
+        block.addView(grid, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(Ui.dp(c, 54), Ui.dp(c, 54));
+        plp.gravity = Gravity.CENTER_HORIZONTAL;
+        plp.topMargin = Ui.dp(c, 4);
+        block.addView(plus, plp);
         FrameLayout lower = new Lower(c);
         lower.addView(block, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
         col.addView(lower, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -152,7 +151,7 @@ final class HomeView extends FrameLayout {
         refresh();
     }
 
-    /** Место под поиском: «+» — по центру по высоте, сайты — под ним. */
+    /** Место под поиском: блок «сайты + плюс» — ровно по центру по высоте. */
     private final class Lower extends FrameLayout {
         Lower(Context c) {
             super(c);
@@ -163,8 +162,7 @@ final class HomeView extends FrameLayout {
             if (getChildCount() == 0) return;
             View v = getChildAt(0);
             int h = b - t, bh = v.getMeasuredHeight(), bw = v.getMeasuredWidth();
-            int top = plus.getVisibility() == VISIBLE ? h / 2 - plus.getMeasuredHeight() / 2 : (h - bh) / 2;
-            top = Math.max(0, Math.min(top, h - bh - Ui.dp(getContext(), 6)));
+            int top = Math.max(0, (h - bh) / 2);
             int left = (r - l - bw) / 2;
             v.layout(left, top, left + bw, top + bh);
         }
