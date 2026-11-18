@@ -12,6 +12,7 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Чтобы назвать приложение в вопросе «Открыть приложение?» -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="false"
