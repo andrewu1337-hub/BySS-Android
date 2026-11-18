@@ -46,19 +46,42 @@ final class Profiles {
                 || h.endsWith(".googleusercontent.com");
     }
 
-    /** Подключить WebView к профилю YouTube — вызывать сразу после создания WebView. */
-    static void attach(WebView w, boolean yt) {
-        if (!yt || !supported()) return;
-        ProfileStore.getInstance().getOrCreateProfile(YT);
-        WebViewCompat.setProfile(w, YT);
+    /** Подключить WebView к профилю (null — обычный) — вызывать сразу после создания WebView. */
+    static void attach(WebView w, String profile) {
+        if (profile == null || !supported()) return;
+        ProfileStore.getInstance().getOrCreateProfile(profile);
+        WebViewCompat.setProfile(w, profile);
     }
 
-    static CookieManager cookies(boolean yt) {
-        if (yt && supported()) {
-            Profile p = ProfileStore.getInstance().getOrCreateProfile(YT);
+    static CookieManager cookies(String profile) {
+        if (profile != null && supported()) {
+            Profile p = ProfileStore.getInstance().getOrCreateProfile(profile);
             return p.getCookieManager();
         }
         return CookieManager.getInstance();
+    }
+
+    static CookieManager cookies(boolean yt) {
+        return cookies(yt ? YT : null);
+    }
+
+    /**
+     * Удалить профиль режима BySS целиком: cookie, входы, данные сайтов, кэш.
+     * WebView этого профиля к этому моменту должны быть уничтожены.
+     */
+    static void delete(String profile, android.os.Handler ui, int attempt) {
+        if (profile == null || !supported()) return;
+        try {
+            ProfileStore store = ProfileStore.getInstance();
+            if (store.getProfile(profile) == null) return;
+            Profile p = store.getProfile(profile);
+            p.getCookieManager().removeAllCookies(null);
+            p.getWebStorage().deleteAllData();
+            store.deleteProfile(profile);
+        } catch (Exception e) {
+            // WebView ещё не отпустил профиль — попробуем чуть позже
+            if (attempt < 6) ui.postDelayed(() -> delete(profile, ui, attempt + 1), 400L * (attempt + 1));
+        }
     }
 
     /** Стереть всё, кроме YouTube. */

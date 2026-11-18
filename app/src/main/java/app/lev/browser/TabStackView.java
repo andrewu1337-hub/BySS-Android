@@ -25,8 +25,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Вкладки стопкой, как в старом Android: карточки лежат одна на другой снизу вверх.
+ * Вкладки: стопкой, как в старом Android (карточки одна на другой снизу вверх), или сеткой 2×N.
  * Листание с мягким «тиком» вибрации, свайп в сторону — закрыть, нажатие — открыть.
+ * Картинки вкладок грузятся только для видимых карточек — 50 вкладок не тормозят.
  */
 @SuppressLint("ViewConstructor")
 final class TabStackView extends FrameLayout {
@@ -36,6 +37,8 @@ final class TabStackView extends FrameLayout {
         void onClose(Tab t);
         void onNewTab();
         void onCloseAll();
+        /** Картинка вкладки: сразу из памяти или позже через done (может не прийти). */
+        void loadThumb(Tab t, java.util.function.Consumer<Bitmap> done);
     }
 
     private final Listener listener;
@@ -57,6 +60,8 @@ final class TabStackView extends FrameLayout {
     private int touched = -1;
     private int lastTick = Integer.MIN_VALUE;
     private boolean busy;
+    private boolean grid;
+    private int cardW, side, cols = 1;
 
     TabStackView(Context c, Listener l) {
         super(c);
@@ -87,9 +92,12 @@ final class TabStackView extends FrameLayout {
         LayoutParams tp = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.TOP);
         addView(top, tp);
 
+        // «+» по центру снизу, без рамки и тени
         ImageButton plus = Ui.iconButton(c, R.drawable.ic_plus);
-        plus.setBackground(Ui.ripple(Ui.round(Ui.pill, Ui.dp(c, 28)), null));
-        plus.setElevation(Ui.dp(c, 6));
+        plus.setBackground(Ui.borderlessRipple());
+        plus.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        int ip = Ui.dp(c, 14);
+        plus.setPadding(ip, ip, ip, ip);
         plus.setOnClickListener(v -> {
             Haptics.click(v);
             listener.onNewTab();
@@ -105,6 +113,7 @@ final class TabStackView extends FrameLayout {
         tabs.clear();
         tabs.addAll(list);
         current = cur;
+        grid = Prefs.tabStyle() == 1;
         deck.removeAllViews();
         cards.clear();
         for (Tab t : tabs) {
@@ -123,16 +132,17 @@ final class TabStackView extends FrameLayout {
             for (int i = 0; i < cards.size(); i++) {
                 View v = cards.get(i);
                 float y = v.getTranslationY();
+                if (v.getVisibility() != VISIBLE) continue;
                 v.setTranslationY(y + Ui.dp(c, 90));
                 v.setAlpha(0f);
-                v.animate().translationY(y).alpha(1f).setStartDelay(Math.min(i, 8) * 18L)
-                        .setDuration(340).setInterpolator(ease).start();
+                v.animate().translationY(y).alpha(1f).setStartDelay(Ui.anim(Math.min(i, 8) * 18L))
+                        .setDuration(Ui.anim(340)).setInterpolator(ease).start();
             }
         });
     }
 
     void hide(Runnable after) {
-        animate().alpha(0f).setDuration(160).withEndAction(() -> {
+        animate().alpha(0f).setDuration(Ui.anim(160)).withEndAction(() -> {
             setVisibility(GONE);
             setAlpha(1f);
             if (after != null) after.run();
@@ -146,11 +156,38 @@ final class TabStackView extends FrameLayout {
 
     private void measureGeometry() {
         int h = getHeight();
+        int w = getWidth();
         topPad = Ui.dp(getContext(), 66);
         bottomPad = Ui.dp(getContext(), 92);
-        cardH = Math.round(h * 0.56f);
-        gap = Math.round(cardH * 0.30f);
-        maxScroll = Math.max(0, topPad + (tabs.size() - 1) * gap + cardH - (h - bottomPad));
+        side = Ui.dp(getContext(), 14);
+        if (grid) {
+            cols = 2;
+            gap = Ui.dp(getContext(), 12);
+            cardW = (w - 2 * side - gap) / 2;
+            cardH = Math.round(cardW * 1.45f);
+            int rows = (tabs.size() + 1) / 2;
+            maxScroll = Math.max(0, topPad + rows * (cardH + gap) - gap - (h - bottomPad));
+        } else {
+            cols = 1;
+            cardW = w - 2 * side;
+            cardH = Math.round(h * 0.56f);
+            gap = Math.round(cardH * 0.30f);
+            maxScroll = Math.max(0, topPad + (tabs.size() - 1) * gap + cardH - (h - bottomPad));
+        }
+        for (int i = 0; i < cards.size(); i++) placeX(cards.get(i), i);
+    }
+
+    /** Колонка карточки: в сетке — левая или правая, в стопке — по центру. */
+    private void placeX(View card, int i) {
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) card.getLayoutParams();
+        int left = grid ? side + (i % 2) * (cardW + gap) : side;
+        if (lp.leftMargin != left || lp.width != cardW || lp.height != cardH) {
+            lp.leftMargin = left;
+            lp.rightMargin = 0;
+            lp.width = cardW;
+            lp.height = cardH;
+            card.setLayoutParams(lp);
+        }
     }
 
     private float clamp(float s) {
@@ -159,11 +196,35 @@ final class TabStackView extends FrameLayout {
 
     private void layoutCards() {
         int h = Math.max(1, getHeight());
+        if (grid) {
+            for (int i = 0; i < cards.size(); i++) {
+                View v = cards.get(i);
+                float y = topPad + (i / 2) * (cardH + gap) - scroll;
+                v.setTranslationY(y);
+                v.setScaleX(1f);
+                v.setScaleY(1f);
+                v.setTranslationZ(0);
+                show(v, i, y + cardH > 0 && y < h);
+            }
+            int tick = (int) Math.floor(scroll / Math.max(1, cardH + gap));
+            if (lastTick != Integer.MIN_VALUE && tick != lastTick) Haptics.tick(this);
+            lastTick = tick;
+            return;
+        }
+        // в «стопке» над экраном видно только 3 последние сжатые карточки
+        int firstOnScreen = cards.size();
+        for (int i = 0; i < cards.size(); i++) {
+            if (topPad + i * gap - scroll >= topPad) {
+                firstOnScreen = i;
+                break;
+            }
+        }
         for (int i = 0; i < cards.size(); i++) {
             View v = cards.get(i);
             float raw = topPad + i * gap - scroll;
             float y;
             float s;
+            show(v, i, i >= firstOnScreen - 3 && raw < h);
             if (raw < topPad) {
                 float over = topPad - raw;
                 y = topPad - Math.min(over * 0.10f, Ui.dp(getContext(), 18));
@@ -185,6 +246,21 @@ final class TabStackView extends FrameLayout {
         lastTick = tick;
     }
 
+    /** Показать/спрятать карточку; при первом показе — подгрузить картинку вкладки. */
+    private void show(View v, int i, boolean visible) {
+        int want = visible ? VISIBLE : INVISIBLE;
+        if (v.getVisibility() != want) v.setVisibility(want);
+        if (visible && v.getTag() instanceof ImageView && i < tabs.size()) {
+            ImageView img = (ImageView) v.getTag();
+            v.setTag(null);
+            Tab t = tabs.get(i);
+            if (t.isHome()) return;
+            listener.loadThumb(t, b -> {
+                if (b != null) img.setImageBitmap(b);
+            });
+        }
+    }
+
     private View card(Context c, Tab t) {
         FrameLayout card = new FrameLayout(c);
         int r = Ui.dp(c, 18);
@@ -196,18 +272,17 @@ final class TabStackView extends FrameLayout {
             }
         });
         card.setClipToOutline(true);
-        card.setElevation(Ui.dp(c, 8));
+        card.setElevation(Ui.dp(c, grid ? 3 : 8));
 
         TopCropImageView img = new TopCropImageView(c);
-        Bitmap thumb = t.thumb;
-        if (thumb != null) {
-            img.setImageBitmap(thumb);
-        } else if (t.isHome()) {
+        if (t.isHome()) {
             int w = Prefs.wallpaper();
-            if (w >= 0 && w < HomeView.WALLPAPERS.length && HomeView.WALLPAPERS[w] != 0) {
+            if (w >= 0 && w < HomeView.WALLPAPERS.length && HomeView.WALLPAPERS[w] > 0) {
                 img.setScaleType(ImageView.ScaleType.CENTER_CROP);
                 img.setImageResource(HomeView.WALLPAPERS[w]);
             }
+        } else {
+            card.setTag(img); // картинку подгрузим, когда карточка станет видна
         }
         img.setBackgroundColor(Ui.dark ? 0xFF111113 : 0xFFF7F7F8);
         FrameLayout.LayoutParams ip = new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT);
@@ -233,14 +308,10 @@ final class TabStackView extends FrameLayout {
         head.addView(close, new LinearLayout.LayoutParams(Ui.dp(c, 44), Ui.dp(c, 44)));
         card.addView(head, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, Ui.dp(c, 44)));
 
-        int side = Ui.dp(c, 14);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0);
-        lp.leftMargin = side;
-        lp.rightMargin = side;
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Math.max(1, cardW), Math.max(1, cardH));
+        lp.gravity = Gravity.TOP | Gravity.START;
         card.setLayoutParams(lp);
-        post(() -> {
-            ViewGroupHelper.setHeight(card, cardH > 0 ? cardH : Math.round(getHeight() * 0.56f));
-        });
+        card.setVisibility(INVISIBLE);
         return card;
     }
 
@@ -255,12 +326,15 @@ final class TabStackView extends FrameLayout {
 
     // ----------------------------------------------------------------- жесты
 
-    private int cardAt(float y) {
+    private int cardAt(float x, float y) {
         for (int i = cards.size() - 1; i >= 0; i--) {
             View v = cards.get(i);
+            if (v.getVisibility() != VISIBLE) continue;
             float top = v.getTranslationY();
             float bottom = top + v.getHeight() * v.getScaleY();
-            if (y >= top && y <= bottom) return i;
+            float left = ((FrameLayout.LayoutParams) v.getLayoutParams()).leftMargin;
+            float right = left + v.getWidth();
+            if (y >= top && y <= bottom && (!grid || (x >= left && x <= right))) return i;
         }
         return -1;
     }
@@ -284,7 +358,7 @@ final class TabStackView extends FrameLayout {
         downX = e.getX();
         downY = lastY = e.getY();
         mode = 0;
-        touched = cardAt(e.getY());
+        touched = cardAt(e.getX(), e.getY());
         if (vt != null) vt.recycle();
         vt = VelocityTracker.obtain();
         vt.addMovement(e);
@@ -344,7 +418,7 @@ final class TabStackView extends FrameLayout {
                     if (!cancel && (Math.abs(dx) > getWidth() * 0.33f || Math.abs(vx) > 1800)) {
                         dismiss(touched, dx == 0 ? 1 : (int) Math.signum(dx));
                     } else {
-                        v.animate().translationX(0).alpha(1f).setDuration(220).setInterpolator(ease).start();
+                        v.animate().translationX(0).alpha(1f).setDuration(Ui.anim(220)).setInterpolator(ease).start();
                     }
                 } else if (!cancel && touched >= 0) {
                     open(touched);
@@ -383,7 +457,7 @@ final class TabStackView extends FrameLayout {
         View v = cards.get(index);
         Tab t = tabs.get(index);
         Haptics.thud(this);
-        v.animate().translationX(dir * getWidth() * 1.1f).alpha(0f).setDuration(200)
+        v.animate().translationX(dir * getWidth() * 1.1f).alpha(0f).setDuration(Ui.anim(200))
                 .setInterpolator(ease).withEndAction(() -> {
                     deck.removeView(v);
                     cards.remove(index);
@@ -401,7 +475,7 @@ final class TabStackView extends FrameLayout {
                         View cv = cards.get(i);
                         float to = cv.getTranslationY();
                         cv.setTranslationY(from.get(i));
-                        cv.animate().translationY(to).setDuration(260).setInterpolator(ease).start();
+                        cv.animate().translationY(to).setDuration(Ui.anim(260)).setInterpolator(ease).start();
                     }
                     busy = false;
                     if (tabs.isEmpty()) hide(null);
@@ -415,7 +489,8 @@ final class TabStackView extends FrameLayout {
         View v = cards.get(index);
         Tab t = tabs.get(index);
         v.setTranslationZ(1000);
-        v.animate().translationY(0).scaleX(1.06f).scaleY(1.06f).setDuration(230).setInterpolator(ease)
+        v.animate().translationY(grid ? v.getTranslationY() : 0).scaleX(1.06f).scaleY(1.06f)
+                .alpha(grid ? 0.4f : 1f).setDuration(Ui.anim(230)).setInterpolator(ease)
                 .withEndAction(() -> {
                     busy = false;
                     listener.onSelect(t);

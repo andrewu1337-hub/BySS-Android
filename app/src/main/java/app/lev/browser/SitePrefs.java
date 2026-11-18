@@ -3,28 +3,65 @@ package app.lev.browser;
 import android.content.Context;
 import android.content.SharedPreferences;
 
-/** Решения по сайтам: блокировать трекеры или разрешить. Хранится по основному домену. */
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Решения по сайтам: блокировать трекеры или разрешить. Хранится по основному домену.
+ * У каждого режима BySS свои решения — при удалении режима они стираются вместе с ним.
+ */
 final class SitePrefs {
 
     private SitePrefs() { }
 
     private static SharedPreferences sp;
+    private static Context app;
+    private static final Map<String, SharedPreferences> bySpace = new HashMap<>();
 
     static void init(Context c) {
-        if (sp == null) sp = c.getApplicationContext().getSharedPreferences("lev_sites", Context.MODE_PRIVATE);
+        if (sp == null) {
+            app = c.getApplicationContext();
+            sp = app.getSharedPreferences("lev_sites", Context.MODE_PRIVATE);
+        }
+    }
+
+    private static String file(String space) {
+        return "lev_sites_" + space;
+    }
+
+    private static SharedPreferences of(String space) {
+        if (space == null) return sp;
+        SharedPreferences p = bySpace.get(space);
+        if (p == null) {
+            p = app.getSharedPreferences(file(space), Context.MODE_PRIVATE);
+            bySpace.put(space, p);
+        }
+        return p;
     }
 
     static boolean hasDecision(String host) {
-        return host != null && sp.contains(AdBlocker.baseDomain(host));
+        return hasDecision(null, host);
+    }
+
+    static boolean hasDecision(String space, String host) {
+        return host != null && of(space).contains(AdBlocker.baseDomain(host));
     }
 
     static boolean isAllowed(String host) {
-        return host != null && "allow".equals(sp.getString(AdBlocker.baseDomain(host), null));
+        return isAllowed(null, host);
+    }
+
+    static boolean isAllowed(String space, String host) {
+        return host != null && "allow".equals(of(space).getString(AdBlocker.baseDomain(host), null));
     }
 
     static void set(String host, boolean allowTrackers) {
+        set(null, host, allowTrackers);
+    }
+
+    static void set(String space, String host, boolean allowTrackers) {
         if (host == null) return;
-        sp.edit().putString(AdBlocker.baseDomain(host), allowTrackers ? "allow" : "block").apply();
+        of(space).edit().putString(AdBlocker.baseDomain(host), allowTrackers ? "allow" : "block").apply();
     }
 
     static int count() {
@@ -33,5 +70,13 @@ final class SitePrefs {
 
     static void clear() {
         sp.edit().clear().apply();
+    }
+
+    /** Режим удалён — его решения по сайтам тоже. */
+    static void forgetSpace(String space) {
+        if (space == null || app == null) return;
+        of(space).edit().clear().commit();
+        bySpace.remove(space);
+        app.deleteSharedPreferences(file(space));
     }
 }

@@ -4,17 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.ShortcutInfo;
-import android.content.pm.ShortcutManager;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
-import android.graphics.ColorMatrix;
-import android.graphics.ColorMatrixColorFilter;
-import android.graphics.Paint;
-import android.graphics.RectF;
-import android.graphics.drawable.Icon;
 import android.net.Uri;
 import android.os.Bundle;
 import android.text.InputType;
@@ -22,22 +13,43 @@ import android.text.format.DateFormat;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.InputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.util.Date;
 import java.util.List;
 import java.util.function.Supplier;
 
-/** «Доп. настройки». */
+/**
+ * «Доп. настройки» по разделам: сначала список разделов, в каждом — свои настройки.
+ */
 public class SettingsActivity extends Activity {
 
+    private static final int REQ_WALL = 41;
+    private static final int REQ_MYICON = 42;
+
+    private static final String[][] PAGES = {
+            {"look", "Внешний вид", "Название, надпись, тема, шторка, значок"},
+            {"home", "Начальный экран", "Фон, три поиска, погода, ярлыки сайтов"},
+            {"tabs", "Вкладки и анимации", "Стопка или сетка, скорость, когда закрывать"},
+            {"search", "Поиск и перевод", "Поисковики, перевод страниц"},
+            {"privacy", "Защита и приватность", "Реклама, трекеры, cookie, режимы BySS"},
+            {"media", "Видео и отклик", "YouTube в фоне, вибрация, звук"},
+            {"about", "О браузере", "Сборка и обновление"},
+    };
+    private static final int[] PAGE_ICONS = {R.drawable.ic_theme, R.drawable.ic_home, R.drawable.ic_tabs,
+            R.drawable.ic_search, R.drawable.ic_shield, R.drawable.ic_play, R.drawable.ic_info};
+
     private LinearLayout list;
+    private String page;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -47,7 +59,14 @@ public class SettingsActivity extends Activity {
         setTheme(dark ? R.style.Theme_Lev_Dark : R.style.Theme_Lev_Light);
         Ui.apply(dark);
         super.onCreate(state);
+        page = getIntent().getStringExtra("page");
         build();
+    }
+
+    private String title() {
+        if (page == null) return "Настройки";
+        for (String[] p : PAGES) if (p[0].equals(page)) return p[1];
+        return "Настройки";
     }
 
     private void build() {
@@ -63,7 +82,7 @@ public class SettingsActivity extends Activity {
         ImageButton back = Ui.iconButton(c, R.drawable.ic_back);
         back.setOnClickListener(v -> finish());
         bar.addView(back, new LinearLayout.LayoutParams(Ui.dp(c, 48), Ui.dp(c, 48)));
-        bar.addView(Ui.text(c, "Настройки", 20, Ui.text, true), new LinearLayout.LayoutParams(-2, -2));
+        bar.addView(Ui.text(c, title(), 20, Ui.text, true), new LinearLayout.LayoutParams(-2, -2));
         rootCol.addView(bar);
 
         ScrollView sv = new ScrollView(c);
@@ -78,19 +97,108 @@ public class SettingsActivity extends Activity {
 
     private void fill() {
         list.removeAllViews();
+        if (page == null) {
+            for (int i = 0; i < PAGES.length; i++) category(PAGE_ICONS[i], PAGES[i]);
+            return;
+        }
+        switch (page) {
+            case "look": look(); break;
+            case "home": home(); break;
+            case "tabs": tabs(); break;
+            case "search": search(); break;
+            case "privacy": privacy(); break;
+            case "media": media(); break;
+            default: about(); break;
+        }
+    }
 
+    // ----------------------------------------------------------- разделы
+
+    private void look() {
+        section("Название");
+        row("Название браузера", Prefs::browserName, this::editName);
+        row("Шрифт надписи на главной", () -> BrandLabel.NAMES[Math.min(Prefs.brandFont(), BrandLabel.NAMES.length - 1)],
+                this::pickBrandFont);
+        toggle("Показывать надпись", "Вверху справа на начальном экране", "brand_show", true);
+
+        section("Оформление");
+        row("Тема", () -> Prefs.dark() ? "Тёмная" : "Светлая", () -> choose("Тема", new String[]{"Тёмная", "Светлая"},
+                Prefs.dark() ? 0 : 1, w -> {
+                    Prefs.put("dark", w == 0);
+                    recreate();
+                }));
+        row("Шторка сверху (время, сеть, батарея)", () -> BAR_NAMES[Math.min(Prefs.statusBar(), 2)],
+                () -> choose("Шторка сверху", BAR_NAMES, Prefs.statusBar(), w -> Prefs.put("status_bar", w)));
+
+        section("Значок");
+        row("Значок приложения", () -> Icons.BUILT_IN[Icons.currentBuiltIn(this)], () ->
+                choose("Значок приложения", Icons.BUILT_IN, Icons.currentBuiltIn(this), w -> {
+                    Icons.setBuiltIn(this, w);
+                    Toast.makeText(this, "Значок поменяется через пару секунд. Если пропал с экрана — "
+                            + "добавьте его снова из списка приложений", Toast.LENGTH_LONG).show();
+                }));
+        row("Мои значки", () -> {
+            int n = Icons.mine(this).size();
+            return n == 0 ? "Своя картинка из галереи — на чёрном фоне, белым или золотом"
+                    : "Сохранено: " + n + " · нажмите, чтобы выбрать или добавить";
+        }, this::myIcons);
+    }
+
+    private static final String[] BAR_NAMES = {"Как фон браузера", "Мягкая: цвет сайта, плавно",
+            "Прозрачная: страница под шторкой"};
+
+    private void home() {
+        section("Фон");
+        row("Картинка", () -> HomeView.WALLPAPER_NAMES[Math.min(Math.max(0, Prefs.wallpaper()), HomeView.WALLPAPER_NAMES.length - 1)],
+                this::pickWallpaper);
+
+        section("Поиск на главной");
+        row("Первый поиск", () -> SearchEngines.get(Prefs.home1()).name, () -> pickEngine("home1"));
+        row("Второй поиск", () -> SearchEngines.get(Prefs.home2()).name, () -> pickEngine("home2"));
+        row("Третий поиск", () -> SearchEngines.get(Prefs.home3()).name, () -> pickEngine("home3"));
+
+        section("Погода");
+        toggle("Погода вверху", "Обновляется раз в 10 минут · данные Open-Meteo", WeatherView.K_ON, true);
+        row("Первый город", () -> WeatherView.summary(1), () -> WeatherView.pickCity(this, 1, this::fill));
+        row("Второй город", () -> WeatherView.summary(2), () -> WeatherView.pickCity(this, 2, this::fill));
+
+        section("Ярлыки сайтов");
+        row("Вернуть стандартные", () -> "До трёх рядов. Долгое нажатие на ярлык — изменить или удалить",
+                () -> new AlertDialog.Builder(this).setTitle("Вернуть стандартные ярлыки?")
+                        .setPositiveButton("Вернуть", (d, w) -> Shortcuts.save(Shortcuts.defaults()))
+                        .setNegativeButton("Отмена", null).show());
+    }
+
+    private static final String[] TAB_STYLES = {"Стопка (как старый Android)", "Сетка 2 × N"};
+    private static final String[] SPEEDS = {"Без анимаций", "Быстро", "Обычно", "Плавно"};
+
+    private void tabs() {
+        section("Вид");
+        row("Как показывать вкладки", () -> TAB_STYLES[Math.min(Prefs.tabStyle(), 1)],
+                () -> choose("Вкладки", TAB_STYLES, Prefs.tabStyle(), w -> Prefs.put("tab_style", w)));
+        row("Скорость анимаций", () -> SPEEDS[Math.min(Prefs.animSpeed(), 3)],
+                () -> choose("Анимации", SPEEDS, Prefs.animSpeed(), w -> Prefs.put("anim_speed", w)));
+
+        section("Когда закрывать");
+        row("Начальная страница после перерыва", () -> minutesName(Prefs.homeAfterMin()), this::pickHomeAfter);
+        row("Закрывать неактивные вкладки", () -> daysName(Prefs.tabExpireDays()), this::pickExpire);
+        row("Сколько вкладок", () -> "До " + Prefs.MAX_TABS + " в каждом режиме. Загружены 4 последние, "
+                + "остальные «спят» и открываются заново. YouTube не засыпает.", null);
+    }
+
+    private void search() {
         section("Поиск");
         row("Поиск в адресной строке", () -> SearchEngines.get(Prefs.engine()).name, () -> pickEngine("engine"));
-        row("Первый поиск на главной", () -> SearchEngines.get(Prefs.home1()).name, () -> pickEngine("home1"));
-        row("Второй поиск на главной", () -> SearchEngines.get(Prefs.home2()).name, () -> pickEngine("home2"));
         row("Свой поисковик", () -> Prefs.customEngine().isEmpty() ? "не задан" : Prefs.customEngine(), this::editCustomEngine);
 
         section("Перевод страниц");
         row("Способ перевода", () -> translateModeName(Prefs.translateMode()), this::pickTranslateMode);
         row("Переводить на", () -> PageTranslator.targetName(Prefs.translateTarget()), this::pickTarget);
         toggle("Предлагать перевод", "Для сайтов не на русском и не на английском", "tr_offer", true);
+    }
 
-        section("Защита");
+    private void privacy() {
+        section("Реклама и слежка");
         toggle("Блокировать рекламу и трекеры", "Списки EasyList, EasyPrivacy, RuAdList и др.", "adblock", true);
         toggle("Спрашивать на новых сайтах", "Блокировать или разрешить трекеры на сайте", "ask_sites", true);
         toggle("Сторонние cookie", "Выключено — меньше слежки между сайтами", "cookies_3p", false);
@@ -109,24 +217,17 @@ public class SettingsActivity extends Activity {
             }));
         });
 
-        section("Вкладки");
-        row("Начальная страница после перерыва", () -> minutesName(Prefs.homeAfterMin()), this::pickHomeAfter);
-        row("Закрывать неактивные вкладки", () -> daysName(Prefs.tabExpireDays()), this::pickExpire);
+        section("Приватные режимы");
+        row("Название режимов", Prefs::incogName, () -> editText("Название приватных режимов", Prefs.incogName(),
+                "BySS", v -> Prefs.put("incog_name", v)));
+        row("Сейчас режимов", () -> {
+            int n = Spaces.all().size();
+            return n == 0 ? "Нет. Создаются в меню ⋮ → «" + Prefs.incogName() + "»"
+                    : n + " · удаляются вручную в меню ⋮ → «" + Prefs.incogName() + "»";
+        }, null);
+    }
 
-        section("Начальный экран");
-        toggle("Погода вверху", "Данные Open-Meteo, без регистрации", WeatherView.K_ON, true);
-        row("Город для погоды", WeatherView::summary, () -> WeatherView.pickCity(this, this::recreate));
-        row("Фон", () -> HomeView.WALLPAPER_NAMES[Math.min(Prefs.wallpaper(), HomeView.WALLPAPER_NAMES.length - 1)],
-                this::pickWallpaper);
-        row("Ярлыки сайтов", () -> "Долгое нажатие на ярлык — изменить или удалить. Нажмите, чтобы вернуть стандартные",
-                () -> new AlertDialog.Builder(this).setTitle("Вернуть стандартные ярлыки?")
-                        .setPositiveButton("Вернуть", (d, w) -> Shortcuts.save(Shortcuts.defaults()))
-                        .setNegativeButton("Отмена", null).show());
-
-        section("Иконка");
-        row("Своя картинка на главный экран", () -> "Выберите любую картинку — появится значок «Лев» с ней",
-                this::pickIconImage);
-
+    private void media() {
         section("Видео");
         toggle("YouTube в фоне", "Музыка играет при свёрнутом браузере, плеер в шторке", "bg_play", true);
         toggle("Убирать рекламу на YouTube", "Иногда YouTube это ломает — тогда нужно обновление", "yt_ads", true);
@@ -134,12 +235,48 @@ public class SettingsActivity extends Activity {
         section("Отклик");
         toggle("Вибрация", "Мягкий «тик» при листании вкладок и нажатиях", "haptics", true);
         toggle("Звук при листании вкладок", null, "sound", false);
+    }
 
-        section("О браузере");
-        row("Лев, сборка " + Updater.currentBuild(this), () -> "Без истории, без рекламы, без лишнего. Перевод на телефоне — Google ML Kit.", null);
+    private void about() {
+        section(Prefs.browserName());
+        row("Сборка " + Updater.currentBuild(this), () -> "Без истории, без рекламы, без лишнего. Перевод на телефоне — Google ML Kit.", null);
+        row("Обновить браузер", () -> "Проверить новую сборку и установить", () -> Updater.check(this));
     }
 
     // ------------------------------------------------------------- строки
+
+    private void category(int icon, String[] p) {
+        Context c = this;
+        LinearLayout r = new LinearLayout(c);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(Ui.dp(c, 20), Ui.dp(c, 14), Ui.dp(c, 12), Ui.dp(c, 14));
+        r.setBackground(Ui.ripple(null, Ui.round(0xFFFFFFFF, 0)));
+        FrameLayout badge = new FrameLayout(c);
+        badge.setBackground(Ui.round(Ui.pill, Ui.dp(c, 12)));
+        ImageView ic = new ImageView(c);
+        ic.setImageResource(icon);
+        ic.setImageTintList(ColorStateList.valueOf(Ui.text));
+        badge.addView(ic, new FrameLayout.LayoutParams(Ui.dp(c, 22), Ui.dp(c, 22), Gravity.CENTER));
+        r.addView(badge, new LinearLayout.LayoutParams(Ui.dp(c, 40), Ui.dp(c, 40)));
+        LinearLayout texts = new LinearLayout(c);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.setPadding(Ui.dp(c, 16), 0, Ui.dp(c, 8), 0);
+        texts.addView(Ui.text(c, p[1], 16, Ui.text, false));
+        TextView st = Ui.text(c, p[2], 13, Ui.text2, false);
+        st.setPadding(0, Ui.dp(c, 2), 0, 0);
+        texts.addView(st);
+        r.addView(texts, new LinearLayout.LayoutParams(0, -2, 1f));
+        ImageView chev = new ImageView(c);
+        chev.setImageResource(R.drawable.ic_chevron);
+        chev.setImageTintList(ColorStateList.valueOf(Ui.text2));
+        r.addView(chev, new LinearLayout.LayoutParams(Ui.dp(c, 20), Ui.dp(c, 20)));
+        r.setOnClickListener(v -> {
+            Haptics.click(v);
+            startActivity(new Intent(this, SettingsActivity.class).putExtra("page", p[0]));
+        });
+        list.addView(r, new LinearLayout.LayoutParams(-1, -2));
+    }
 
     private void section(String title) {
         Context c = this;
@@ -216,9 +353,72 @@ public class SettingsActivity extends Activity {
                 .setNegativeButton("Отмена", null).show();
     }
 
+    private void editText(String title, String value, String hint, java.util.function.Consumer<String> save) {
+        EditText e = new EditText(this);
+        e.setSingleLine(true);
+        e.setHint(hint);
+        e.setText(value);
+        e.setSelectAllOnFocus(true);
+        int p = Ui.dp(this, 22);
+        FrameLayout box = new FrameLayout(this);
+        box.setPadding(p, Ui.dp(this, 8), p, 0);
+        box.addView(e);
+        new AlertDialog.Builder(this).setTitle(title).setView(box)
+                .setPositiveButton("Сохранить", (d, w) -> {
+                    save.accept(e.getText().toString().trim());
+                    fill();
+                })
+                .setNegativeButton("Отмена", null).show();
+    }
+
+    private void editName() {
+        editText("Название браузера", Prefs.browserName(), "BySS", v -> {
+            Prefs.put("name", v);
+            Toast.makeText(this, "Готово. Подпись под значком в списке приложений Android менять не даёт — "
+                    + "а у ярлыков из «Мои значки» будет новое название", Toast.LENGTH_LONG).show();
+        });
+    }
+
+    /** Выбор шрифта надписи — с живыми образцами. */
+    private void pickBrandFont() {
+        Context c = this;
+        LinearLayout box = new LinearLayout(c);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 4));
+        AlertDialog[] dlg = new AlertDialog[1];
+        for (int i = 0; i < BrandLabel.NAMES.length; i++) {
+            int idx = i;
+            LinearLayout r = new LinearLayout(c);
+            r.setOrientation(LinearLayout.HORIZONTAL);
+            r.setGravity(Gravity.CENTER_VERTICAL);
+            r.setPadding(Ui.dp(c, 22), Ui.dp(c, 8), Ui.dp(c, 16), Ui.dp(c, 8));
+            r.setBackground(Ui.ripple(i == Prefs.brandFont() ? Ui.round(Ui.pill, Ui.dp(c, 14)) : null,
+                    Ui.round(0xFFFFFFFF, Ui.dp(c, 14))));
+            TextView name = Ui.text(c, (i + 1) + " · " + BrandLabel.NAMES[i], 13, Ui.text2, false);
+            r.addView(name, new LinearLayout.LayoutParams(Ui.dp(c, 130), -2));
+            BrandLabel l = new BrandLabel(c);
+            l.setStyle(i);
+            l.setSizeScale(1.25f);
+            l.setText(Prefs.browserName());
+            r.addView(l, new LinearLayout.LayoutParams(-2, -2));
+            r.setOnClickListener(v -> {
+                Haptics.click(v);
+                Prefs.put("brand_font", idx);
+                dlg[0].dismiss();
+                fill();
+            });
+            box.addView(r, new LinearLayout.LayoutParams(-1, -2));
+        }
+        ScrollView sv = new ScrollView(c);
+        sv.addView(box);
+        dlg[0] = new AlertDialog.Builder(this).setTitle("Шрифт надписи").setView(sv)
+                .setNegativeButton("Отмена", null).show();
+    }
+
     private void pickEngine(String key) {
         List<SearchEngines.Engine> all = SearchEngines.all();
-        String cur = Prefs.sp().getString(key, key.equals("home2") ? "yandex" : "google");
+        String def = key.equals("home2") ? "yandex" : key.equals("home3") ? "ddg" : "google";
+        String cur = Prefs.sp().getString(key, def);
         String[] names = new String[all.size()];
         int checked = 0;
         for (int i = 0; i < all.size(); i++) {
@@ -320,91 +520,136 @@ public class SettingsActivity extends Activity {
     }
 
     private void pickWallpaper() {
-        choose("Фон начальной страницы", HomeView.WALLPAPER_NAMES, Prefs.wallpaper(), w -> Prefs.put("wallpaper", w));
+        int cur = Math.max(0, Math.min(Prefs.wallpaper(), HomeView.WALLPAPER_NAMES.length - 1));
+        new AlertDialog.Builder(this).setTitle("Фон начальной страницы")
+                .setSingleChoiceItems(HomeView.WALLPAPER_NAMES, cur, (d, w) -> {
+                    d.dismiss();
+                    if (w == HomeView.CUSTOM) {
+                        pickImage(REQ_WALL, "Картинка для фона");
+                    } else {
+                        Prefs.put("wallpaper", w);
+                        fill();
+                    }
+                })
+                .setNegativeButton("Отмена", null).show();
     }
 
-    // ------------------------------------------------------- своя иконка
-
-    private void pickIconImage() {
+    private void pickImage(int req, String title) {
         Intent i = new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
         try {
-            startActivityForResult(Intent.createChooser(i, "Картинка для значка"), BrowserActivity.REQ_ICON);
+            startActivityForResult(Intent.createChooser(i, title), req);
         } catch (Exception e) {
             Toast.makeText(this, "Нет приложения для выбора картинки", Toast.LENGTH_SHORT).show();
         }
     }
 
+    // ------------------------------------------------------- мои значки
+
+    private void myIcons() {
+        Context c = this;
+        LinearLayout box = new LinearLayout(c);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(Ui.dp(c, 18), Ui.dp(c, 4), Ui.dp(c, 18), Ui.dp(c, 4));
+        AlertDialog[] dlg = new AlertDialog[1];
+        List<File> files = Icons.mine(this);
+        LinearLayout row = null;
+        for (int i = 0; i < files.size(); i++) {
+            if (i % 3 == 0) {
+                row = new LinearLayout(c);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                box.addView(row, new LinearLayout.LayoutParams(-1, -2));
+            }
+            File f = files.get(i);
+            ImageView iv = new ImageView(c);
+            Bitmap b = Icons.load(f);
+            iv.setImageBitmap(b);
+            iv.setBackground(Ui.round(0xFF000000, Ui.dp(c, 18)));
+            iv.setClipToOutline(true);
+            int pd = Ui.dp(c, 2);
+            iv.setPadding(pd, pd, pd, pd);
+            iv.setOnClickListener(v -> {
+                dlg[0].dismiss();
+                if (b != null) Icons.pin(this, b);
+            });
+            iv.setOnLongClickListener(v -> {
+                dlg[0].dismiss();
+                new AlertDialog.Builder(this).setTitle("Удалить этот значок?")
+                        .setMessage("Из списка «Мои значки». Ярлык на главном экране, если он есть, останется.")
+                        .setPositiveButton("Удалить", (d, w) -> {
+                            //noinspection ResultOfMethodCallIgnored
+                            f.delete();
+                            fill();
+                        })
+                        .setNegativeButton("Отмена", null).show();
+                return true;
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, Ui.dp(c, 88), 1f);
+            lp.setMargins(Ui.dp(c, 4), Ui.dp(c, 4), Ui.dp(c, 4), Ui.dp(c, 4));
+            row.addView(iv, lp);
+        }
+        if (row != null) {
+            for (int k = files.size() % 3; k != 0 && k < 3; k++) row.addView(new View(c), new LinearLayout.LayoutParams(0, 1, 1f));
+        }
+        TextView hint = Ui.text(c, files.isEmpty()
+                ? "Выберите картинку из галереи — она встанет на чёрный фон, тёмный рисунок станет белым или золотым."
+                : "Нажмите на значок — поставить на главный экран. Долгое нажатие — удалить.", 13, Ui.text2, false);
+        hint.setPadding(Ui.dp(c, 4), Ui.dp(c, 8), Ui.dp(c, 4), 0);
+        box.addView(hint);
+        ScrollView sv = new ScrollView(c);
+        sv.addView(box);
+        dlg[0] = new AlertDialog.Builder(this).setTitle("Мои значки").setView(sv)
+                .setPositiveButton("Добавить", (d, w) -> pickImage(REQ_MYICON, "Картинка для значка"))
+                .setNegativeButton("Закрыть", null).show();
+    }
+
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
-        if (req != BrowserActivity.REQ_ICON || res != RESULT_OK || data == null || data.getData() == null) return;
+        if (res != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
-        Bitmap src = decode(uri);
+        Bitmap src = Icons.decode(this, uri);
         if (src == null) {
             Toast.makeText(this, "Не получилось открыть картинку", Toast.LENGTH_SHORT).show();
             return;
         }
-        new AlertDialog.Builder(this).setTitle("Значок на главный экран")
-                .setMessage("Картинка будет на чёрном фоне. Если она тёмная на белом — можно инвертировать, "
-                        + "чтобы получилось светлое на чёрном.")
-                .setPositiveButton("Как есть", (d, w) -> pin(src, false))
-                .setNeutralButton("Инвертировать", (d, w) -> pin(src, true))
-                .setNegativeButton("Отмена", null).show();
+        if (req == REQ_WALL) {
+            saveWallpaper(src);
+        } else if (req == REQ_MYICON || req == BrowserActivity.REQ_ICON) {
+            new AlertDialog.Builder(this).setTitle("Каким сделать значок?")
+                    .setItems(new String[]{"Белый на чёрном", "Золотой на чёрном", "Как есть, на чёрном"}, (d, w) -> {
+                        Bitmap icon = Icons.make(src, w);
+                        File f = Icons.save(this, icon);
+                        fill();
+                        if (f == null) {
+                            Toast.makeText(this, "Не получилось сохранить значок", Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+                        new AlertDialog.Builder(this).setTitle("Значок сохранён")
+                                .setMessage("Поставить его на главный экран сейчас?")
+                                .setPositiveButton("Поставить", (d2, w2) -> Icons.pin(this, icon))
+                                .setNegativeButton("Позже", null).show();
+                    })
+                    .setNegativeButton("Отмена", null).show();
+        }
     }
 
-    private Bitmap decode(Uri uri) {
+    private void saveWallpaper(Bitmap src) {
         try {
-            BitmapFactory.Options o = new BitmapFactory.Options();
-            o.inJustDecodeBounds = true;
-            try (InputStream in = getContentResolver().openInputStream(uri)) {
-                BitmapFactory.decodeStream(in, null, o);
+            int max = 1600;
+            Bitmap b = src;
+            if (Math.max(b.getWidth(), b.getHeight()) > max) {
+                float s = max / (float) Math.max(b.getWidth(), b.getHeight());
+                b = Bitmap.createScaledBitmap(b, Math.round(b.getWidth() * s), Math.round(b.getHeight() * s), true);
             }
-            int sample = 1;
-            while (Math.max(o.outWidth, o.outHeight) / sample > 1024) sample *= 2;
-            BitmapFactory.Options o2 = new BitmapFactory.Options();
-            o2.inSampleSize = sample;
-            try (InputStream in = getContentResolver().openInputStream(uri)) {
-                return BitmapFactory.decodeStream(in, null, o2);
+            try (FileOutputStream out = new FileOutputStream(HomeView.customWallpaper(this))) {
+                b.compress(Bitmap.CompressFormat.JPEG, 90, out);
             }
+            Prefs.put("wallpaper", HomeView.CUSTOM);
+            Toast.makeText(this, "Фон поставлен", Toast.LENGTH_SHORT).show();
+            fill();
         } catch (Exception e) {
-            return null;
+            Toast.makeText(this, "Не получилось сохранить фон", Toast.LENGTH_SHORT).show();
         }
-    }
-
-    private void pin(Bitmap src, boolean invert) {
-        int size = 432; // 108dp при 4x — размер адаптивного значка
-        Bitmap out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(out);
-        canvas.drawColor(0xFF000000);
-        float box = size * 0.62f;
-        float scale = Math.min(box / src.getWidth(), box / src.getHeight());
-        float w = src.getWidth() * scale;
-        float h = src.getHeight() * scale;
-        RectF dst = new RectF((size - w) / 2f, (size - h) / 2f, (size + w) / 2f, (size + h) / 2f);
-        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        if (invert) {
-            p.setColorFilter(new ColorMatrixColorFilter(new ColorMatrix(new float[]{
-                    -1, 0, 0, 0, 255,
-                    0, -1, 0, 0, 255,
-                    0, 0, -1, 0, 255,
-                    0, 0, 0, 1, 0})));
-        }
-        canvas.drawBitmap(src, null, dst, p);
-
-        ShortcutManager sm = getSystemService(ShortcutManager.class);
-        if (sm == null || !sm.isRequestPinShortcutSupported()) {
-            Toast.makeText(this, "Ваш экран «Домой» не поддерживает значки приложений", Toast.LENGTH_LONG).show();
-            return;
-        }
-        Intent launch = new Intent(this, BrowserActivity.class).setAction(Intent.ACTION_MAIN);
-        ShortcutInfo si = new ShortcutInfo.Builder(this, "lev_icon_" + System.currentTimeMillis())
-                .setShortLabel(getString(R.string.app_name))
-                .setIcon(Icon.createWithAdaptiveBitmap(out))
-                .setIntent(launch)
-                .build();
-        sm.requestPinShortcut(si, null);
-        Toast.makeText(this, "Подтвердите добавление значка. Старый значок можно убрать с экрана — "
-                + "приложение останется в списке приложений.", Toast.LENGTH_LONG).show();
     }
 
     @Override
@@ -412,7 +657,4 @@ public class SettingsActivity extends Activity {
         super.onResume();
         if (list != null) fill();
     }
-
-    @SuppressWarnings("unused")
-    private static void noop(View v) { }
 }

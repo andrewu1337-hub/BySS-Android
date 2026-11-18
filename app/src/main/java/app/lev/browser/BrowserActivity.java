@@ -120,6 +120,18 @@ public class BrowserActivity extends Activity {
 
     private final Runnable refreshShield = this::updateShield;
 
+    private boolean builtDark;
+    /** Текущий режим BySS (null — обычный). */
+    private String space;
+    /** Картинки вкладок — в памяти только последние (≈24 МБ), остальные на диске. */
+    private final android.util.LruCache<Long, Bitmap> thumbs = new android.util.LruCache<Long, Bitmap>(24 * 1024 * 1024) {
+        @Override
+        protected int sizeOf(Long key, Bitmap value) {
+            return value.getByteCount();
+        }
+    };
+    private final java.util.concurrent.ExecutorService thumbExec = java.util.concurrent.Executors.newSingleThreadExecutor();
+
     // =================================================================== жизнь
 
     @Override
@@ -127,6 +139,7 @@ public class BrowserActivity extends Activity {
         Prefs.init(this);
         SitePrefs.init(this);
         boolean dark = Prefs.dark();
+        builtDark = dark;
         setTheme(dark ? R.style.Theme_Lev_Dark : R.style.Theme_Lev_Light);
         Ui.apply(dark);
         super.onCreate(state);
@@ -138,6 +151,7 @@ public class BrowserActivity extends Activity {
         translator = new PageTranslator(this, asset("js/translate.js"));
 
         buildUi();
+        applyStatusBar();
         restoreTabs();
         boolean opened = handleIntent(getIntent());
         if (!opened) {
@@ -164,6 +178,11 @@ public class BrowserActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (Prefs.dark() != builtDark) { // тему поменяли в настройках — перестроить окно
+            saveTabs();
+            recreate();
+            return;
+        }
         Ui.apply(Prefs.dark());
         removeExpiredTabs();
         long lb = Prefs.lastBackground();
@@ -181,9 +200,10 @@ public class BrowserActivity extends Activity {
             // нет WebView
         }
         for (Tab t : tabs) {
-            if (t.web != null) Profiles.cookies(t.ytProfile).setAcceptThirdPartyCookies(t.web, Prefs.thirdPartyCookies());
+            if (t.web != null) Profiles.cookies(t.profile).setAcceptThirdPartyCookies(t.web, Prefs.thirdPartyCookies());
         }
         home.refresh();
+        applyStatusBar();
         updateBars();
     }
 
@@ -193,7 +213,10 @@ public class BrowserActivity extends Activity {
         if (shot != null) shot.cancel();
         saveTabs();
         CookieManager.getInstance().flush();
-        if (Profiles.supported()) Profiles.cookies(true).flush();
+        if (Profiles.supported()) {
+            Profiles.cookies(true).flush();
+            for (Spaces.Space s : Spaces.all()) Profiles.cookies(Spaces.profile(s.id)).flush();
+        }
         boolean keepMedia = mediaTab != null && mediaTab.mediaPlaying && Prefs.bgPlay();
         for (Tab t : tabs) {
             if (t.web == null) continue;
@@ -256,6 +279,8 @@ public class BrowserActivity extends Activity {
         Context c = this;
         root = new FrameLayout(c);
         root.setBackgroundColor(Ui.bg);
+        root.setFocusable(true);
+        root.setFocusableInTouchMode(true);
 
         LinearLayout column = new LinearLayout(c);
         column.setOrientation(LinearLayout.VERTICAL);
@@ -282,7 +307,7 @@ public class BrowserActivity extends Activity {
             @Override public void onSearch(String engineId, String q) {
                 go(SearchEngines.searchUrl(SearchEngines.get(engineId), q));
             }
-            @Override public void onPickEngine(int slot) { pickEngine(slot == 1 ? "home1" : "home2"); }
+            @Override public void onPickEngine(int slot) { pickEngine("home" + slot); }
         });
 
         bottom = new LinearLayout(c);
@@ -293,7 +318,9 @@ public class BrowserActivity extends Activity {
         prompt = new LinearLayout(c);
         prompt.setOrientation(LinearLayout.VERTICAL);
         prompt.setVisibility(View.GONE);
-        bottom.addView(prompt, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(-1, -2);
+        plp.setMargins(Ui.dp(c, 10), Ui.dp(c, 8), Ui.dp(c, 10), Ui.dp(c, 4));
+        bottom.addView(prompt, plp);
 
         progress = new View(c);
         progress.setBackgroundColor(Ui.text);
@@ -368,6 +395,24 @@ public class BrowserActivity extends Activity {
             if (url != null) go(url);
             return true;
         });
+        address.setOnLongClickListener(v -> {
+            if (address.hasFocus() || cur == null || cur.isHome() || cur.url == null) return false;
+            Haptics.thud(v);
+            String url = cur.url;
+            new AlertDialog.Builder(this)
+                    .setTitle(url)
+                    .setItems(new String[]{"Скопировать ссылку", "Поделиться ссылкой", "Изменить адрес"}, (d, w) -> {
+                        if (w == 0) copy(url);
+                        else if (w == 1) share(url);
+                        else {
+                            address.requestFocus();
+                            InputMethodManager imm = getSystemService(InputMethodManager.class);
+                            if (imm != null) imm.showSoftInput(address, 0);
+                        }
+                    })
+                    .show();
+            return true;
+        });
         pill.addView(address, new LinearLayout.LayoutParams(0, -1, 1f));
 
         btnTranslate = Ui.iconButton(c, R.drawable.ic_translate);
@@ -406,7 +451,7 @@ public class BrowserActivity extends Activity {
         ImageButton plus = Ui.iconButton(c, R.drawable.ic_plus);
         plus.setOnClickListener(v -> {
             Haptics.click(v);
-            newHomeTab();
+            plusTab();
         });
         tabsBtn = new TextView(c);
         tabsBtn.setGravity(Gravity.CENTER);
@@ -445,17 +490,21 @@ public class BrowserActivity extends Activity {
             @Override public void onClose(Tab t) { closeTab(t, false); }
             @Override public void onNewTab() {
                 stack.hide(null);
-                newHomeTab();
+                plusTab();
             }
             @Override public void onCloseAll() {
                 new AlertDialog.Builder(BrowserActivity.this)
                         .setTitle("Закрыть все вкладки?")
+                        .setMessage(space == null ? null : "Только в режиме «" + Spaces.name(space) + "». Сам режим останется.")
                         .setPositiveButton("Закрыть", (d, w) -> {
-                            for (Tab t : new ArrayList<>(tabs)) closeTab(t, false);
+                            for (Tab t : spaceTabs()) closeTab(t, false);
                             stack.hide(null);
-                            newHomeTab();
+                            if (spaceTabs().isEmpty()) newHomeTab();
                         })
                         .setNegativeButton("Отмена", null).show();
+            }
+            @Override public void loadThumb(Tab t, java.util.function.Consumer<Bitmap> done) {
+                BrowserActivity.this.loadThumb(t, done);
             }
         });
         stack.setVisibility(View.GONE);
@@ -471,9 +520,11 @@ public class BrowserActivity extends Activity {
 
     private void hideKeyboard() {
         InputMethodManager imm = getSystemService(InputMethodManager.class);
-        if (imm != null) imm.hideSoftInputFromWindow(address.getWindowToken(), 0);
-        address.clearFocus();
+        View f = getCurrentFocus();
+        if (imm != null) imm.hideSoftInputFromWindow((f != null ? f : address).getWindowToken(), 0);
         root.requestFocus();
+        if (address.hasFocus()) address.clearFocus();
+        if (f != null && f != address && f.hasFocus()) f.clearFocus();
     }
 
     private static String host(String url) {
@@ -504,8 +555,12 @@ public class BrowserActivity extends Activity {
         Ui.setEnabledLook(btnTranslate, web);
         btnTranslate.setImageTintList(ColorStateList.valueOf(cur.translated ? Ui.text : Ui.text));
         btnTranslate.setBackground(cur.translated ? Ui.round(Ui.pill, Ui.dp(this, 22)) : Ui.borderlessRipple());
-        int n = tabs.size();
+        int n = spaceTabs().size();
         tabsBtn.setText(n > 99 ? ":)" : String.valueOf(n));
+        boolean inSpace = space != null;
+        ((View) address.getParent()).setBackground(Ui.round(inSpace ? (Ui.dark ? 0xFF2A2236 : 0xFFEDE7F6) : Ui.pill,
+                Ui.dp(this, 22)));
+        address.setHint(inSpace ? Spaces.name(space) + " · поиск или адрес" : "Поиск или адрес");
         swipe.setEnabled(web);
         updateShield();
     }
@@ -520,7 +575,7 @@ public class BrowserActivity extends Activity {
             engineGlyph.setText(e.glyph);
             engineGlyph.setTextSize(e.glyph.length() > 1 ? 10 : 13);
         } else {
-            boolean allowed = !Prefs.adblock() || SitePrefs.isAllowed(cur.pageHost);
+            boolean allowed = !Prefs.adblock() || SitePrefs.isAllowed(cur.space, cur.pageHost);
             shield.setImageResource(allowed ? R.drawable.ic_shield_off : R.drawable.ic_shield);
             shield.setAlpha(allowed ? 0.55f : 1f);
         }
@@ -529,11 +584,11 @@ public class BrowserActivity extends Activity {
 
     private void setPageProgress(int p) {
         if (p >= 100) {
-            progress.animate().scaleX(1f).setDuration(120).withEndAction(() ->
-                    progress.animate().alpha(0f).setDuration(220).start()).start();
+            progress.animate().scaleX(1f).setDuration(Ui.anim(120)).withEndAction(() ->
+                    progress.animate().alpha(0f).setDuration(Ui.anim(220)).start()).start();
         } else {
             progress.setAlpha(1f);
-            progress.animate().scaleX(Math.max(0.06f, p / 100f)).setDuration(160).start();
+            progress.animate().scaleX(Math.max(0.06f, p / 100f)).setDuration(Ui.anim(160)).start();
         }
     }
 
@@ -546,8 +601,44 @@ public class BrowserActivity extends Activity {
         tabs.addAll(saved);
         removeExpiredTabs();
         cur = null;
+        // вкладки удалённых режимов — выбросить
+        java.util.Set<String> alive = new java.util.HashSet<>();
+        for (Spaces.Space s : Spaces.all()) alive.add(s.id);
+        for (Tab t : new ArrayList<>(tabs)) if (t.space != null && !alive.contains(t.space)) tabs.remove(t);
         for (Tab t : tabs) if (t.id == curId[0]) cur = t;
         if (cur == null && !tabs.isEmpty()) cur = tabs.get(tabs.size() - 1);
+        space = cur == null ? null : cur.space;
+    }
+
+    /** Вкладки текущего режима (обычного или BySS). */
+    private List<Tab> spaceTabs() {
+        List<Tab> out = new ArrayList<>();
+        for (Tab t : tabs) if (java.util.Objects.equals(t.space, space)) out.add(t);
+        return out;
+    }
+
+    /** Можно ли открыть ещё вкладку; если нет — предложить закрыть самую старую. */
+    private boolean roomForTab(Runnable thenOpen) {
+        List<Tab> mine = spaceTabs();
+        if (mine.size() < Prefs.MAX_TABS) return true;
+        Tab oldest = null;
+        for (Tab t : mine) {
+            if (t == cur || t == mediaTab) continue;
+            if (oldest == null || t.lastUsed < oldest.lastUsed) oldest = t;
+        }
+        Tab victim = oldest;
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
+                .setTitle("Открыто " + Prefs.MAX_TABS + " вкладок")
+                .setMessage("Это максимум, чтобы телефон не тормозил. Закрыть самую старую вкладку и открыть новую?")
+                .setNegativeButton("Отмена", null);
+        if (victim != null) {
+            b.setPositiveButton("Закрыть старую", (d, w) -> {
+                closeTab(victim, false);
+                if (thenOpen != null) thenOpen.run();
+            });
+        }
+        b.show();
+        return false;
     }
 
     void saveTabs() {
@@ -575,14 +666,21 @@ public class BrowserActivity extends Activity {
 
     private void newHomeTab() {
         Tab t = new Tab();
+        t.space = space;
         tabs.add(t);
         showTab(t);
+    }
+
+    /** Новая вкладка с кнопки «+» — с проверкой предела. */
+    private void plusTab() {
+        if (!roomForTab(this::newHomeTab)) return;
+        newHomeTab();
     }
 
     /** Через N минут без браузера — сразу начальная страница. */
     private void openHome() {
         if (cur != null && cur.isHome()) return;
-        for (Tab t : tabs) {
+        for (Tab t : spaceTabs()) {
             if (t.isHome()) {
                 tabs.remove(t);
                 tabs.add(t);
@@ -600,17 +698,19 @@ public class BrowserActivity extends Activity {
             if (address.hasFocus()) hideKeyboard();
         }
         cur = t;
+        space = t.space;
         t.lastUsed = System.currentTimeMillis();
         holder.removeAllViews();
         if (t.isHome()) {
             detach(home);
+            home.setSpace(space == null ? null : Spaces.name(space));
             home.refresh();
             holder.addView(home, new FrameLayout.LayoutParams(-1, -1));
             home.setAlpha(0f);
-            home.animate().alpha(1f).setDuration(180).start();
+            home.animate().alpha(1f).setDuration(Ui.anim(180)).start();
         } else {
             if (t.web == null) {
-                createWeb(t, wantsYt(t.url));
+                createWeb(t, profileFor(t, t.url));
                 if (t.state == null || t.web.restoreState(t.state) == null) t.web.loadUrl(t.url);
                 t.state = null;
             }
@@ -619,6 +719,11 @@ public class BrowserActivity extends Activity {
             t.web.onResume();
         }
         hidePrompt();
+        if (Prefs.statusBar() == 1) {
+            pageColor = 0;
+            if (!t.isHome()) readPageColor(t);
+            applyStatusBar();
+        }
         updateBars();
         saveTabs();
     }
@@ -631,8 +736,16 @@ public class BrowserActivity extends Activity {
         return Profiles.supported() && Profiles.isYouTube(host(url));
     }
 
+    /** Профиль для вкладки: режим BySS — свой; YouTube — свой; остальное — обычный. */
+    private String profileFor(Tab t, String url) {
+        if (t.space != null) return Profiles.supported() ? Spaces.profile(t.space) : null;
+        return wantsYt(url) ? Profiles.YT : null;
+    }
+
     /** Открыть адрес в текущей вкладке (с начальной страницы — в ней же). */
     void go(String url) {
+        View f = getCurrentFocus();
+        if (f instanceof EditText) hideKeyboard();
         if (cur == null) newHomeTab();
         loadUrl(cur, url);
     }
@@ -640,16 +753,14 @@ public class BrowserActivity extends Activity {
     void loadUrl(Tab t, String url) {
         if (url == null) return;
         String h = host(url);
-        boolean yt = wantsYt(url);
-        if (t.web != null && Profiles.supported() && t.ytProfile != yt
-                && !(t.ytProfile && Profiles.belongsToYouTube(h))) {
-            destroyWeb(t);
-        }
+        String profile = profileFor(t, url);
+        if (t.space == null && t.ytProfile && Profiles.belongsToYouTube(h)) profile = Profiles.YT;
+        if (t.web != null && !java.util.Objects.equals(t.profile, profile)) destroyWeb(t);
         t.url = url;
         t.translated = false;
         t.state = null;
         if (t.web == null) {
-            createWeb(t, yt);
+            createWeb(t, profile);
             if (t == cur) {
                 holder.removeAllViews();
                 holder.addView(t.web, new FrameLayout.LayoutParams(-1, -1));
@@ -661,23 +772,24 @@ public class BrowserActivity extends Activity {
     }
 
     private void closeTab(Tab t, boolean showNext) {
-        int idx = tabs.indexOf(t);
-        if (idx < 0) return;
+        if (!tabs.contains(t)) return;
+        List<Tab> same = new ArrayList<>();
+        for (Tab o : tabs) if (java.util.Objects.equals(o.space, t.space)) same.add(o);
+        int idx = same.indexOf(t);
         if (t == mediaTab) stopMedia();
         translator.forget(t);
         destroyWeb(t);
         deleteThumb(t);
         tabs.remove(t);
+        same.remove(t);
+        thumbs.remove(t.id);
         for (Tab o : tabs) if (o.parent == t) o.parent = null;
         if (t == cur) {
             cur = null;
-            if (tabs.isEmpty()) {
+            if (same.isEmpty()) {
                 newHomeTab();
-            } else if (showNext) {
-                showTab(tabs.get(Math.max(0, Math.min(idx, tabs.size()) - 1)));
             } else {
-                cur = tabs.get(Math.max(0, Math.min(idx, tabs.size()) - 1));
-                showTab(cur);
+                showTab(same.get(Math.max(0, Math.min(idx, same.size()) - 1)));
             }
         } else {
             updateBars();
@@ -689,13 +801,7 @@ public class BrowserActivity extends Activity {
         if (address.hasFocus()) hideKeyboard();
         closeMenu();
         if (cur != null) captureThumb(cur);
-        for (Tab t : tabs) {
-            if (t.thumb == null) {
-                File f = thumbFile(t);
-                if (f.exists()) t.thumb = BitmapFactory.decodeFile(f.getAbsolutePath());
-            }
-        }
-        stack.show(tabs, cur);
+        stack.show(spaceTabs(), cur);
     }
 
     private File thumbFile(Tab t) {
@@ -708,20 +814,20 @@ public class BrowserActivity extends Activity {
     private void deleteThumb(Tab t) {
         //noinspection ResultOfMethodCallIgnored
         thumbFile(t).delete();
-        t.thumb = null;
+        thumbs.remove(t.id);
     }
 
     private void captureThumb(Tab t) {
         if (t == null || t.isHome() || t.web == null || t.web.getWidth() == 0 || t.web.getHeight() == 0) return;
         try {
-            float s = 0.38f;
+            float s = 0.3f;
             Bitmap b = Bitmap.createBitmap(Math.round(t.web.getWidth() * s), Math.round(t.web.getHeight() * s),
                     Bitmap.Config.RGB_565);
             Canvas c = new Canvas(b);
             c.scale(s, s);
             c.translate(-t.web.getScrollX(), -t.web.getScrollY());
             t.web.draw(c);
-            t.thumb = b;
+            thumbs.put(t.id, b);
             File f = thumbFile(t);
             new Thread(() -> {
                 try (FileOutputStream out = new FileOutputStream(f)) {
@@ -733,6 +839,27 @@ public class BrowserActivity extends Activity {
         } catch (Throwable ignored) {
             // нехватка памяти — без картинки
         }
+    }
+
+    /** Картинка вкладки для списка вкладок: из памяти, иначе с диска в фоне. */
+    private void loadThumb(Tab t, java.util.function.Consumer<Bitmap> done) {
+        Bitmap b = thumbs.get(t.id);
+        if (b != null) {
+            done.accept(b);
+            return;
+        }
+        File f = thumbFile(t);
+        if (!f.exists()) return;
+        thumbExec.execute(() -> {
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inPreferredConfig = Bitmap.Config.RGB_565;
+            Bitmap d = BitmapFactory.decodeFile(f.getAbsolutePath(), o);
+            if (d == null) return;
+            ui.post(() -> {
+                thumbs.put(t.id, d);
+                done.accept(d);
+            });
+        });
     }
 
     private void destroyWeb(Tab t) {
@@ -798,6 +925,7 @@ public class BrowserActivity extends Activity {
         if (url == null) return false;
         skipHomeOnce = true;
         Tab t = new Tab();
+        space = null;
         tabs.add(t);
         cur = null;
         showTab(t);
@@ -807,10 +935,12 @@ public class BrowserActivity extends Activity {
 
     // ================================================================ WebView
 
-    private void createWeb(Tab t, boolean yt) {
+    private void createWeb(Tab t, String profile) {
         LevWebView w = new LevWebView(this);
-        Profiles.attach(w, yt);
-        t.ytProfile = yt && Profiles.supported();
+        if (!Profiles.supported()) profile = null;
+        Profiles.attach(w, profile);
+        t.profile = profile;
+        t.ytProfile = Profiles.YT.equals(profile);
         w.setBackgroundColor(Ui.bg);
         w.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
 
@@ -837,7 +967,7 @@ public class BrowserActivity extends Activity {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
             WebSettingsCompat.setRequestedWithHeaderOriginAllowList(s, Collections.emptySet());
         }
-        CookieManager cm = Profiles.cookies(t.ytProfile);
+        CookieManager cm = Profiles.cookies(t.profile);
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(w, Prefs.thirdPartyCookies());
 
@@ -914,7 +1044,7 @@ public class BrowserActivity extends Activity {
             Uri u = req.getUrl();
             String sc = u.getScheme() == null ? "" : u.getScheme().toLowerCase(Locale.ROOT);
             if (sc.equals("http") || sc.equals("https")) {
-                if (req.isForMainFrame() && Profiles.supported()) {
+                if (req.isForMainFrame() && Profiles.supported() && t.space == null) {
                     String h = u.getHost();
                     boolean toYt = Profiles.isYouTube(h);
                     if ((t.ytProfile && !Profiles.belongsToYouTube(h)) || (!t.ytProfile && toYt)) {
@@ -941,7 +1071,7 @@ public class BrowserActivity extends Activity {
             String sc = u.getScheme();
             if (!"http".equals(sc) && !"https".equals(sc)) return null;
             String ph = t.pageHost;
-            if (ph != null && SitePrefs.isAllowed(ph)) return null;
+            if (ph != null && SitePrefs.isAllowed(t.space, ph)) return null;
             if (AdBlocker.shouldBlock(u, ph)) {
                 t.blocked.incrementAndGet();
                 if (t == cur) {
@@ -971,6 +1101,7 @@ public class BrowserActivity extends Activity {
             t.url = url;
             t.title = view.getTitle();
             swipe.setRefreshing(false);
+            if (t == cur && Prefs.statusBar() == 1) readPageColor(t);
             if (t == cur) {
                 updateBars();
                 maybePrompt(t);
@@ -994,7 +1125,7 @@ public class BrowserActivity extends Activity {
                 view.destroy();
             }
             if (wasCur && url != null) {
-                createWeb(t, wantsYt(url));
+                createWeb(t, profileFor(t, url));
                 holder.removeAllViews();
                 holder.addView(t.web, new FrameLayout.LayoutParams(-1, -1));
                 t.web.loadUrl(url);
@@ -1023,11 +1154,17 @@ public class BrowserActivity extends Activity {
         @Override
         public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
             if (!isUserGesture) return false; // всплывающие окна без нажатия — блокируем
+            if (spaceTabs().size() >= Prefs.MAX_TABS) {
+                Toast.makeText(BrowserActivity.this, "Открыто " + Prefs.MAX_TABS + " вкладок — закройте ненужные",
+                        Toast.LENGTH_SHORT).show();
+                return false;
+            }
             Tab nt = new Tab();
             nt.url = "about:blank";
             nt.parent = t;
+            nt.space = t.space;
             tabs.add(tabs.indexOf(t) + 1, nt);
-            createWeb(nt, false);
+            createWeb(nt, t.space != null ? t.profile : null);
             WebView.WebViewTransport tr = (WebView.WebViewTransport) resultMsg.obj;
             tr.setWebView(nt.web);
             resultMsg.sendToTarget();
@@ -1089,7 +1226,7 @@ public class BrowserActivity extends Activity {
 
         @JavascriptInterface
         public String css(String host) {
-            if (!Prefs.adblock() || host == null || SitePrefs.isAllowed(host)) return "";
+            if (!Prefs.adblock() || host == null || SitePrefs.isAllowed(t.space, host)) return "";
             return AdBlocker.cssFor(host);
         }
 
@@ -1098,7 +1235,7 @@ public class BrowserActivity extends Activity {
             try {
                 JSONObject o = new JSONObject();
                 o.put("bg", Prefs.bgPlay());
-                o.put("ads", Prefs.ytAds() && Prefs.adblock() && !SitePrefs.isAllowed("youtube.com"));
+                o.put("ads", Prefs.ytAds() && Prefs.adblock() && !SitePrefs.isAllowed(t.space, "youtube.com"));
                 return o.toString();
             } catch (Exception e) {
                 return "{}";
@@ -1210,6 +1347,7 @@ public class BrowserActivity extends Activity {
         WebChromeClient.CustomViewCallback cb = fsCallback;
         fsCallback = null;
         if (notifyPage && cb != null) cb.onCustomViewHidden();
+        applyStatusBar();
     }
 
     // ================================================================ загрузки
@@ -1223,7 +1361,7 @@ public class BrowserActivity extends Activity {
             String name = URLUtil.guessFileName(url, disposition, mime);
             DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
             if (mime != null) r.setMimeType(mime);
-            String cookie = Profiles.cookies(cur != null && cur.ytProfile).getCookie(url);
+            String cookie = Profiles.cookies(cur == null ? null : cur.profile).getCookie(url);
             if (cookie != null) r.addRequestHeader("Cookie", cookie);
             if (ua != null) r.addRequestHeader("User-Agent", ua);
             r.setTitle(name);
@@ -1264,16 +1402,22 @@ public class BrowserActivity extends Activity {
         if (link != null) {
             labels.add("Открыть в новой вкладке");
             acts.add(() -> {
-                Tab nt = new Tab();
-                nt.parent = t;
-                tabs.add(tabs.indexOf(t) + 1, nt);
-                showTab(nt);
-                loadUrl(nt, link);
+                Runnable open = () -> {
+                    Tab nt = new Tab();
+                    nt.parent = t;
+                    nt.space = t.space;
+                    tabs.add(tabs.indexOf(t) + 1, nt);
+                    showTab(nt);
+                    loadUrl(nt, link);
+                };
+                if (roomForTab(open)) open.run();
             });
             labels.add("Открыть в фоне");
             acts.add(() -> {
+                if (!roomForTab(null)) return;
                 Tab nt = new Tab();
                 nt.url = link;
+                nt.space = t.space;
                 tabs.add(tabs.indexOf(t) + 1, nt);
                 updateBars();
                 saveTabs();
@@ -1322,7 +1466,7 @@ public class BrowserActivity extends Activity {
     private void maybePrompt(Tab t) {
         if (t != cur || !Prefs.adblock() || !Prefs.askSites() || t.pageHost == null) return;
         String base = AdBlocker.baseDomain(t.pageHost);
-        if (SitePrefs.hasDecision(t.pageHost) || base.equals(promptDismissed)) return;
+        if (SitePrefs.hasDecision(t.space, t.pageHost) || base.equals(promptDismissed)) return;
         if (base.equals(promptBase) && prompt.getVisibility() == View.VISIBLE) {
             updatePromptCount();
             return;
@@ -1336,8 +1480,9 @@ public class BrowserActivity extends Activity {
         Context c = this;
         promptBase = base;
         prompt.removeAllViews();
-        prompt.setPadding(Ui.dp(c, 16), Ui.dp(c, 12), Ui.dp(c, 8), Ui.dp(c, 8));
-        prompt.setBackgroundColor(Ui.bar);
+        prompt.setPadding(Ui.dp(c, 16), Ui.dp(c, 12), Ui.dp(c, 8), Ui.dp(c, 10));
+        prompt.setBackground(Ui.round(Ui.card, Ui.dp(c, 22)));
+        prompt.setElevation(Ui.dp(c, 6));
 
         LinearLayout top = new LinearLayout(c);
         top.setOrientation(LinearLayout.HORIZONTAL);
@@ -1365,7 +1510,7 @@ public class BrowserActivity extends Activity {
         TextView allow = pillButton(c, "Разрешить трекеры", false);
         allow.setOnClickListener(v -> {
             Haptics.click(v);
-            SitePrefs.set(t.pageHost, true);
+            SitePrefs.set(t.space, t.pageHost, true);
             hidePrompt();
             if (t.web != null) t.web.reload();
             updateShield();
@@ -1373,7 +1518,7 @@ public class BrowserActivity extends Activity {
         TextView block = pillButton(c, "Блокировать", true);
         block.setOnClickListener(v -> {
             Haptics.click(v);
-            SitePrefs.set(t.pageHost, false);
+            SitePrefs.set(t.space, t.pageHost, false);
             hidePrompt();
             updateShield();
         });
@@ -1387,7 +1532,7 @@ public class BrowserActivity extends Activity {
         prompt.setVisibility(View.VISIBLE);
         prompt.setAlpha(0f);
         prompt.setTranslationY(Ui.dp(c, 24));
-        prompt.animate().alpha(1f).translationY(0).setDuration(220).start();
+        prompt.animate().alpha(1f).translationY(0).setDuration(Ui.anim(220)).start();
     }
 
     private TextView pillButton(Context c, String label, boolean primary) {
@@ -1417,7 +1562,7 @@ public class BrowserActivity extends Activity {
     private void hidePrompt() {
         if (prompt.getVisibility() != View.VISIBLE) return;
         promptBase = null;
-        prompt.animate().alpha(0f).setDuration(150).withEndAction(() -> {
+        prompt.animate().alpha(0f).setDuration(Ui.anim(150)).withEndAction(() -> {
             prompt.setVisibility(View.GONE);
             Runnable r = afterPrompt;
             afterPrompt = null;
@@ -1466,8 +1611,9 @@ public class BrowserActivity extends Activity {
         Context c = this;
         promptBase = null;
         prompt.removeAllViews();
-        prompt.setPadding(Ui.dp(c, 16), Ui.dp(c, 12), Ui.dp(c, 8), Ui.dp(c, 8));
-        prompt.setBackgroundColor(Ui.bar);
+        prompt.setPadding(Ui.dp(c, 16), Ui.dp(c, 12), Ui.dp(c, 8), Ui.dp(c, 10));
+        prompt.setBackground(Ui.round(Ui.card, Ui.dp(c, 22)));
+        prompt.setElevation(Ui.dp(c, 6));
 
         LinearLayout top = new LinearLayout(c);
         top.setOrientation(LinearLayout.HORIZONTAL);
@@ -1516,7 +1662,7 @@ public class BrowserActivity extends Activity {
         prompt.setVisibility(View.VISIBLE);
         prompt.setAlpha(0f);
         prompt.setTranslationY(Ui.dp(c, 24));
-        prompt.animate().alpha(1f).translationY(0).setDuration(220).start();
+        prompt.animate().alpha(1f).translationY(0).setDuration(Ui.anim(220)).start();
     }
 
     private void onSiteButton() {
@@ -1526,7 +1672,7 @@ public class BrowserActivity extends Activity {
         }
         String h = cur.pageHost;
         if (h == null) return;
-        boolean allowed = SitePrefs.isAllowed(h);
+        boolean allowed = SitePrefs.isAllowed(cur.space, h);
         String base = AdBlocker.baseDomain(h);
         String msg = (Prefs.adblock()
                 ? (allowed ? "Трекеры и реклама на этом сайте разрешены." : "Трекеры и реклама блокируются.")
@@ -1537,7 +1683,7 @@ public class BrowserActivity extends Activity {
                 .setNegativeButton("Закрыть", null);
         if (Prefs.adblock()) {
             b.setPositiveButton(allowed ? "Блокировать" : "Разрешить трекеры", (d, w) -> {
-                SitePrefs.set(h, !allowed);
+                SitePrefs.set(cur.space, h, !allowed);
                 if (cur.web != null) cur.web.reload();
                 updateShield();
             });
@@ -1547,7 +1693,7 @@ public class BrowserActivity extends Activity {
 
     void pickEngine(String key) {
         List<SearchEngines.Engine> all = SearchEngines.all();
-        String curId = Prefs.sp().getString(key, key.equals("home2") ? "yandex" : "google");
+        String curId = Prefs.sp().getString(key, key.equals("home2") ? "yandex" : key.equals("home3") ? "ddg" : "google");
         String[] names = new String[all.size()];
         int checked = 0;
         for (int i = 0; i < all.size(); i++) {
@@ -1555,7 +1701,8 @@ public class BrowserActivity extends Activity {
             if (all.get(i).id.equals(curId)) checked = i;
         }
         String title = key.equals("engine") ? "Поиск в адресной строке"
-                : key.equals("home1") ? "Первый поиск на главной" : "Второй поиск на главной";
+                : key.equals("home1") ? "Первый поиск на главной"
+                : key.equals("home2") ? "Второй поиск на главной" : "Третий поиск на главной";
         new AlertDialog.Builder(this).setTitle(title)
                 .setSingleChoiceItems(names, checked, (d, w) -> {
                     Prefs.put(key, all.get(w).id);
@@ -1602,7 +1749,7 @@ public class BrowserActivity extends Activity {
         overlay.setBackgroundColor(Ui.scrim);
         overlay.setVisibility(View.VISIBLE);
         overlay.setAlpha(0f);
-        overlay.animate().alpha(1f).setDuration(160).start();
+        overlay.animate().alpha(1f).setDuration(Ui.anim(160)).start();
         overlay.setOnClickListener(v -> closeMenu());
 
         LinearLayout panel = new LinearLayout(c);
@@ -1613,39 +1760,48 @@ public class BrowserActivity extends Activity {
         panel.setClickable(true);
 
         boolean translated = cur != null && cur.translated;
-        boolean canTranslate = cur != null && !cur.isHome();
-        if (canTranslate && cur.pageHost != null) siteSwitch(panel, cur);
-        menuItem(panel, R.drawable.ic_incognito, "Инкогнито", "скоро", Ui.text, () ->
-                new AlertDialog.Builder(this).setTitle("Режим инкогнито")
-                        .setMessage("Сделаю, как только опишете, как он должен работать.")
-                        .setPositiveButton("Хорошо", null).show());
-        menuItem(panel, R.drawable.ic_translate, translated ? "Показать оригинал" : "Перевести страницу",
-                canTranslate ? null : "откройте сайт", canTranslate ? Ui.text : Ui.text2,
-                () -> toggleTranslate(Prefs.translateMode()));
-        menuItem(panel, R.drawable.ic_screenshot, "Длинный скриншот",
-                canTranslate ? null : "откройте сайт", canTranslate ? Ui.text : Ui.text2, this::longScreenshot);
-        menuItem(panel, R.drawable.ic_download, "Скачанные файлы", null, Ui.text, () -> {
+        boolean site = cur != null && !cur.isHome() && cur.url != null;
+        if (site && cur.pageHost != null) siteSwitch(panel, cur);
+
+        // Пункты меню: чем длиннее текст, тем выше; «Удалить все данные» — всегда последний.
+        List<Object[]> items = new ArrayList<>();
+        android.content.pm.ResolveInfo app = site ? appFor(cur.url) : null;
+        if (app != null) {
+            String appName = String.valueOf(app.loadLabel(getPackageManager()));
+            items.add(new Object[]{R.drawable.ic_forward, "Открыть в приложении", appName, (Runnable) () -> openInApp(cur.url, app)});
+        }
+        if (site) {
+            items.add(new Object[]{R.drawable.ic_translate, translated ? "Показать оригинал" : "Перевести страницу", null,
+                    (Runnable) () -> toggleTranslate(Prefs.translateMode())});
+            items.add(new Object[]{R.drawable.ic_screenshot, "Длинный скриншот", null, (Runnable) this::longScreenshot});
+        }
+        items.add(new Object[]{R.drawable.ic_reload, "Обновить браузер", null, (Runnable) () -> Updater.check(this)});
+        items.add(new Object[]{R.drawable.ic_download, "Скачанные файлы", null, (Runnable) () -> {
             try {
                 startActivity(new Intent(DownloadManager.ACTION_VIEW_DOWNLOADS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             } catch (Exception e) {
                 Toast.makeText(this, "Откройте приложение «Файлы» → Загрузки", Toast.LENGTH_SHORT).show();
             }
-        });
-        menuItem(panel, R.drawable.ic_theme, Ui.dark ? "Светлая тема" : "Тёмная тема", null, Ui.text, () -> {
+        }});
+        items.add(new Object[]{R.drawable.ic_settings, "Доп. настройки", null,
+                (Runnable) () -> startActivity(new Intent(this, SettingsActivity.class))});
+        items.add(new Object[]{R.drawable.ic_theme, Ui.dark ? "Светлая тема" : "Тёмная тема", null, (Runnable) () -> {
             Prefs.put("dark", !Ui.dark);
             saveTabs();
             recreate();
-        });
-        menuItem(panel, R.drawable.ic_reload, "Обновить браузер", "сборка " + Updater.currentBuild(this), Ui.text,
-                () -> Updater.check(this));
-        menuItem(panel, R.drawable.ic_trash, "Удалить все данные", null, Ui.danger, this::confirmWipe);
+        }});
+        String incog = space != null ? Spaces.name(space) : Prefs.incogName();
+        items.add(new Object[]{R.drawable.ic_shield, incog, null, (Runnable) this::openSpaces});
+        java.util.Collections.sort(items, (x, y) -> Integer.compare(((String) y[1]).length(), ((String) x[1]).length()));
+        for (Object[] it : items) {
+            menuItem(panel, (Integer) it[0], (String) it[1], (String) it[2], Ui.text, (Runnable) it[3]);
+        }
         View line = new View(c);
         line.setBackgroundColor(Ui.line);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, Ui.dp(c, 1));
         lp.setMargins(Ui.dp(c, 16), Ui.dp(c, 6), Ui.dp(c, 16), Ui.dp(c, 6));
         panel.addView(line, lp);
-        menuItem(panel, R.drawable.ic_settings, "Доп. настройки", null, Ui.text,
-                () -> startActivity(new Intent(this, SettingsActivity.class)));
+        menuItem(panel, R.drawable.ic_trash, "Удалить все данные", null, Ui.danger, this::confirmWipe);
 
         FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(Ui.dp(c, 270), -2, Gravity.BOTTOM | Gravity.END);
         pp.rightMargin = Ui.dp(c, 10);
@@ -1657,7 +1813,7 @@ public class BrowserActivity extends Activity {
             panel.setScaleX(0.9f);
             panel.setScaleY(0.9f);
             panel.setAlpha(0f);
-            panel.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(200)
+            panel.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(Ui.anim(200))
                     .setInterpolator(new android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f)).start();
         });
     }
@@ -1681,6 +1837,10 @@ public class BrowserActivity extends Activity {
         box.setElevation(Ui.dp(c, 12));
         TextView msg = Ui.text(c, "Снимаю всю страницу…", 14, Ui.text, false);
         box.addView(msg, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView stopBtn = pillButton(c, "Стоп", true);
+        box.addView(stopBtn);
+        View gapV = new View(c);
+        box.addView(gapV, new LinearLayout.LayoutParams(Ui.dp(c, 6), 1));
         TextView cancel = pillButton(c, "Отмена", false);
         box.addView(cancel);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
@@ -1691,7 +1851,8 @@ public class BrowserActivity extends Activity {
         shot = new LongShot(this, t.web, new LongShot.Listener() {
             @Override
             public void progress(int frame, int frames) {
-                msg.setText(frames > 1 ? "Снимаю всю страницу… " + frame + " из " + frames : "Снимаю страницу…");
+                msg.setText(frames > 1 ? "Снимаю… " + frame + " из " + frames + "\n«Стоп» — сохранить, что уже снято"
+                        : "Снимаю страницу…");
             }
 
             @Override
@@ -1707,15 +1868,20 @@ public class BrowserActivity extends Activity {
             }
         });
         cancel.setOnClickListener(v -> {
-            msg.setText("Останавливаю…");
-            shot.cancel();
+            msg.setText("Отменяю…");
+            if (shot != null) shot.cancel();
+        });
+        stopBtn.setOnClickListener(v -> {
+            Haptics.click(v);
+            msg.setText("Сохраняю…");
+            if (shot != null) shot.stop();
         });
         shot.start();
     }
 
     private void shotSaved(Uri uri, boolean cropped) {
-        String m = "Галерея → Pictures/Лев";
-        if (cropped) m += "\n\nСтраница бесконечная — снята первая часть.";
+        String m = "Галерея → Pictures/" + LongShot.folder();
+        if (cropped) m += "\n\nСнята часть страницы.";
         new AlertDialog.Builder(this)
                 .setTitle("Скриншот сохранён")
                 .setMessage(m)
@@ -1729,7 +1895,7 @@ public class BrowserActivity extends Activity {
                         startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "image/jpeg")
                                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
                     } catch (Exception e) {
-                        Toast.makeText(this, "Откройте Галерею → Pictures/Лев", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(this, "Откройте Галерею → Pictures/" + LongShot.folder(), Toast.LENGTH_SHORT).show();
                     }
                 })
                 .setNegativeButton("Готово", null)
@@ -1748,7 +1914,7 @@ public class BrowserActivity extends Activity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(Ui.dp(c, 18), Ui.dp(c, 4), Ui.dp(c, 12), Ui.dp(c, 4));
         ImageView ic = new ImageView(c);
-        boolean on = global && !SitePrefs.isAllowed(host);
+        boolean on = global && !SitePrefs.isAllowed(t.space, host);
         ic.setImageResource(on ? R.drawable.ic_shield : R.drawable.ic_shield_off);
         ic.setImageTintList(ColorStateList.valueOf(Ui.text));
         row.addView(ic, new LinearLayout.LayoutParams(Ui.dp(c, 22), Ui.dp(c, 22)));
@@ -1774,7 +1940,7 @@ public class BrowserActivity extends Activity {
         sw.setEnabled(global);
         sw.setOnCheckedChangeListener((b, checked) -> {
             Haptics.click(b);
-            SitePrefs.set(host, !checked);
+            SitePrefs.set(t.space, host, !checked);
             ic.setImageResource(checked ? R.drawable.ic_shield : R.drawable.ic_shield_off);
             subView.setText(base + (checked ? "" : " · разрешено"));
             if (base.equals(promptBase)) hidePrompt();
@@ -1826,7 +1992,7 @@ public class BrowserActivity extends Activity {
     private void closeMenu() {
         if (!menuOpen) return;
         menuOpen = false;
-        overlay.animate().alpha(0f).setDuration(140).withEndAction(() -> {
+        overlay.animate().alpha(0f).setDuration(Ui.anim(140)).withEndAction(() -> {
             overlay.setVisibility(View.GONE);
             overlay.removeAllViews();
         }).start();
@@ -1836,7 +2002,8 @@ public class BrowserActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("Удалить все данные?")
                 .setMessage("Будут удалены входы на сайтах (cookie), кэш, данные сайтов, решения по трекерам "
-                        + "и все вкладки.\n\nYouTube не тронется: вы останетесь в аккаунте.\nНастройки и ярлыки останутся.")
+                        + "и все вкладки.\n\nYouTube не тронется: вы останетесь в аккаунте.\nНастройки и ярлыки останутся."
+                        + "\nРежимы «" + Prefs.incogName() + "» удаляются отдельно — в своём меню.")
                 .setPositiveButton("Удалить", (d, w) -> wipe())
                 .setNegativeButton("Отмена", null)
                 .show();
@@ -1844,7 +2011,7 @@ public class BrowserActivity extends Activity {
 
     private void wipe() {
         LevWebView any = null;
-        for (Tab t : tabs) if (t.web != null && !t.ytProfile) any = t.web;
+        for (Tab t : tabs) if (t.web != null && !t.ytProfile && t.space == null) any = t.web;
         if (any != null) {
             any.clearCache(true);
         } else {
@@ -1853,12 +2020,14 @@ public class BrowserActivity extends Activity {
             tmp.destroy();
         }
         for (Tab t : new ArrayList<>(tabs)) {
+            if (t.space != null) continue;
             if (t == mediaTab) stopMedia();
             destroyWeb(t);
             deleteThumb(t);
+            tabs.remove(t);
         }
-        tabs.clear();
         cur = null;
+        space = null;
         Profiles.wipeExceptYouTube();
         WebViewDatabase.getInstance(this).clearHttpAuthUsernamePassword();
         GeolocationPermissions.getInstance().clearAll();
@@ -1869,6 +2038,306 @@ public class BrowserActivity extends Activity {
         promptDismissed = null;
         newHomeTab();
         Toast.makeText(this, "Данные удалены. YouTube вас помнит.", Toast.LENGTH_LONG).show();
+    }
+
+    // ======================================================= режимы BySS
+
+    private void openSpaces() {
+        if (!Profiles.supported()) {
+            Toast.makeText(this, "Нужен свежий «Android System WebView» — обновите его в Play Маркете",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        Context c = this;
+        LinearLayout list = new LinearLayout(c);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 4));
+        AlertDialog[] dlg = new AlertDialog[1];
+        TextView about = Ui.text(c, "Отдельные приватные режимы: свои входы, cookie и данные сайтов. "
+                + "Можно держать несколько сразу. Удаляются только вручную — и тогда от режима не остаётся ничего.",
+                13, Ui.text2, false);
+        about.setPadding(Ui.dp(c, 24), 0, Ui.dp(c, 24), Ui.dp(c, 8));
+        list.addView(about);
+        if (space != null) {
+            list.addView(spaceRow(c, R.drawable.ic_back, "Обычный режим", countName(null), () -> {
+                dlg[0].dismiss();
+                switchSpace(null);
+            }, null, null));
+        }
+        for (Spaces.Space s : Spaces.all()) {
+            boolean now = s.id.equals(space);
+            list.addView(spaceRow(c, R.drawable.ic_shield, s.name + (now ? " · сейчас" : ""), countName(s.id), () -> {
+                dlg[0].dismiss();
+                if (!now) switchSpace(s.id);
+            }, () -> {
+                dlg[0].dismiss();
+                confirmDeleteSpace(s);
+            }, () -> {
+                dlg[0].dismiss();
+                renameSpace(s);
+            }));
+        }
+        list.addView(spaceRow(c, R.drawable.ic_plus, "Новый режим", null, () -> {
+            dlg[0].dismiss();
+            Spaces.Space s = Spaces.create();
+            switchSpace(s.id);
+        }, null, null));
+        android.widget.ScrollView sv = new android.widget.ScrollView(c);
+        sv.addView(list);
+        dlg[0] = new AlertDialog.Builder(this).setTitle(Prefs.incogName()).setView(sv)
+                .setNegativeButton("Закрыть", null).show();
+    }
+
+    private String countName(String sp) {
+        int n = 0;
+        for (Tab t : tabs) if (java.util.Objects.equals(t.space, sp)) n++;
+        if (n == 0) return "нет вкладок";
+        int m10 = n % 10, m100 = n % 100;
+        String w = (m10 == 1 && m100 != 11) ? "вкладка" : (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) ? "вкладки" : "вкладок";
+        return n + " " + w;
+    }
+
+    private View spaceRow(Context c, int icon, String title, String sub, Runnable open, Runnable delete, Runnable rename) {
+        LinearLayout row = new LinearLayout(c);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(Ui.dp(c, 24), Ui.dp(c, 8), Ui.dp(c, 12), Ui.dp(c, 8));
+        row.setBackground(Ui.ripple(null, Ui.round(0xFFFFFFFF, Ui.dp(c, 14))));
+        ImageView ic = new ImageView(c);
+        ic.setImageResource(icon);
+        ic.setImageTintList(ColorStateList.valueOf(Ui.text));
+        row.addView(ic, new LinearLayout.LayoutParams(Ui.dp(c, 22), Ui.dp(c, 22)));
+        LinearLayout texts = new LinearLayout(c);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.setPadding(Ui.dp(c, 16), 0, Ui.dp(c, 8), 0);
+        texts.addView(Ui.text(c, title, 16, Ui.text, false));
+        if (sub != null) texts.addView(Ui.text(c, sub, 12, Ui.text2, false));
+        row.addView(texts, new LinearLayout.LayoutParams(0, -2, 1f));
+        if (delete != null) {
+            ImageButton del = Ui.iconButton(c, R.drawable.ic_trash);
+            del.setImageTintList(ColorStateList.valueOf(Ui.danger));
+            del.setOnClickListener(v -> {
+                Haptics.click(v);
+                delete.run();
+            });
+            row.addView(del, new LinearLayout.LayoutParams(Ui.dp(c, 44), Ui.dp(c, 44)));
+        }
+        row.setOnClickListener(v -> {
+            Haptics.click(v);
+            open.run();
+        });
+        if (rename != null) {
+            row.setOnLongClickListener(v -> {
+                Haptics.thud(v);
+                rename.run();
+                return true;
+            });
+        }
+        row.setMinimumHeight(Ui.dp(c, 56));
+        return row;
+    }
+
+    private void switchSpace(String id) {
+        if (cur != null) captureThumb(cur);
+        space = id;
+        Tab target = null;
+        for (Tab t : spaceTabs()) if (target == null || t.lastUsed > target.lastUsed) target = t;
+        if (target == null) newHomeTab(); else showTab(target);
+        Toast.makeText(this, id == null ? "Обычный режим"
+                : "«" + Spaces.name(id) + "»: свои входы и cookie. Удаляется вручную", Toast.LENGTH_SHORT).show();
+    }
+
+    private void renameSpace(Spaces.Space s) {
+        EditText e = new EditText(this);
+        e.setSingleLine(true);
+        e.setText(s.name);
+        e.setSelectAllOnFocus(true);
+        FrameLayout box = new FrameLayout(this);
+        int pd = Ui.dp(this, 22);
+        box.setPadding(pd, Ui.dp(this, 8), pd, 0);
+        box.addView(e);
+        new AlertDialog.Builder(this).setTitle("Название режима").setView(box)
+                .setPositiveButton("Сохранить", (d, w) -> {
+                    String n = e.getText().toString().trim();
+                    if (!n.isEmpty()) Spaces.rename(s.id, n);
+                    if (s.id.equals(space)) {
+                        home.setSpace(Spaces.name(space));
+                        updateBars();
+                    }
+                })
+                .setNegativeButton("Отмена", null).show();
+    }
+
+    private void confirmDeleteSpace(Spaces.Space s) {
+        new AlertDialog.Builder(this)
+                .setTitle("Удалить «" + s.name + "»?")
+                .setMessage("Вы точно хотите удалить? Сотрётся всё, что было в этом режиме: вкладки, входы на сайтах, "
+                        + "cookie, данные сайтов и кэш. Вернуть будет нельзя.")
+                .setPositiveButton("Удалить", (d, w) -> deleteSpace(s.id))
+                .setNegativeButton("Отмена", null)
+                .show();
+    }
+
+    private void deleteSpace(String id) {
+        boolean wasCurrent = id.equals(space);
+        for (Tab t : new ArrayList<>(tabs)) {
+            if (!id.equals(t.space)) continue;
+            if (t == mediaTab) stopMedia();
+            translator.forget(t);
+            destroyWeb(t);
+            deleteThumb(t);
+            tabs.remove(t);
+        }
+        Spaces.remove(id);
+        if (wasCurrent) {
+            space = null;
+            cur = null;
+            Tab target = null;
+            for (Tab t : spaceTabs()) if (target == null || t.lastUsed > target.lastUsed) target = t;
+            if (target == null) newHomeTab(); else showTab(target);
+        }
+        saveTabs();
+        updateBars();
+        ui.postDelayed(() -> Profiles.delete(Spaces.profile(id), ui, 0), 500);
+        Toast.makeText(this, "Режим удалён — от него ничего не осталось", Toast.LENGTH_SHORT).show();
+    }
+
+    // ================================================== открыть в приложении
+
+    /** Приложение (не браузер), которое умеет открыть этот адрес, — например Facebook. */
+    private android.content.pm.ResolveInfo appFor(String url) {
+        try {
+            PackageManager pm = getPackageManager();
+            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE);
+            List<android.content.pm.ResolveInfo> apps = pm.queryIntentActivities(i, PackageManager.MATCH_ALL);
+            if (apps.isEmpty()) return null;
+            Intent probe = new Intent(Intent.ACTION_VIEW, Uri.parse("https://lev-probe.invalid/x"))
+                    .addCategory(Intent.CATEGORY_BROWSABLE);
+            java.util.Set<String> browsers = new java.util.HashSet<>();
+            for (android.content.pm.ResolveInfo r : pm.queryIntentActivities(probe, PackageManager.MATCH_ALL)) {
+                browsers.add(r.activityInfo.packageName);
+            }
+            for (android.content.pm.ResolveInfo r : apps) {
+                String pkg = r.activityInfo.packageName;
+                if (pkg.equals(getPackageName()) || browsers.contains(pkg)) continue;
+                return r;
+            }
+        } catch (Exception ignored) {
+            // нет приложения
+        }
+        return null;
+    }
+
+    private void openInApp(String url, android.content.pm.ResolveInfo r) {
+        try {
+            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)
+                    .setClassName(r.activityInfo.packageName, r.activityInfo.name)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        } catch (Exception e) {
+            Toast.makeText(this, "Не получилось открыть приложение", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    // ============================================================ шторка сверху
+
+    private int pageColor;
+    private android.animation.ValueAnimator barAnim;
+
+    private int statusBarHeight() {
+        int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        return id > 0 ? getResources().getDimensionPixelSize(id) : Ui.dp(this, 24);
+    }
+
+    /** 0 — как фон браузера, 1 — цвет сайта (плавно), 2 — прозрачная, страница под шторкой. */
+    @SuppressWarnings("deprecation")
+    void applyStatusBar() {
+        int mode = Prefs.statusBar();
+        android.view.Window w = getWindow();
+        View d = w.getDecorView();
+        int flags = d.getSystemUiVisibility()
+                & ~(View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        if (mode == 2) {
+            flags |= View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+            if (barAnim != null) barAnim.cancel();
+            w.setStatusBarColor(0x00000000);
+            lightIcons(!Ui.dark);
+        } else {
+            int target = mode == 1 && cur != null && !cur.isHome() && pageColor != 0 ? pageColor : Ui.bg;
+            animateBar(target);
+        }
+        d.setSystemUiVisibility(flags);
+        int inset = mode == 2 ? statusBarHeight() : 0;
+        if (home != null) home.setTopInset(inset);
+        if (stack != null) stack.setPadding(0, inset, 0, 0);
+    }
+
+    private void animateBar(int target) {
+        android.view.Window w = getWindow();
+        int from = w.getStatusBarColor();
+        if (barAnim != null) barAnim.cancel();
+        if (from == target || Ui.anim(300) == 0) {
+            w.setStatusBarColor(target);
+        } else {
+            barAnim = android.animation.ValueAnimator.ofArgb(from, target);
+            barAnim.setDuration(Ui.anim(320));
+            barAnim.addUpdateListener(a -> w.setStatusBarColor((Integer) a.getAnimatedValue()));
+            barAnim.start();
+        }
+        lightIcons(luminance(target) > 0.6);
+    }
+
+    @SuppressWarnings("deprecation")
+    private void lightIcons(boolean lightBar) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            WindowInsetsController c = getWindow().getInsetsController();
+            if (c != null) {
+                c.setSystemBarsAppearance(lightBar ? WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS : 0,
+                        WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS);
+            }
+        } else {
+            View d = getWindow().getDecorView();
+            int f = d.getSystemUiVisibility();
+            d.setSystemUiVisibility(lightBar ? f | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR : f & ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        }
+    }
+
+    private static double luminance(int c) {
+        return (0.299 * ((c >> 16) & 0xFF) + 0.587 * ((c >> 8) & 0xFF) + 0.114 * (c & 0xFF)) / 255.0;
+    }
+
+    /** Цвет сайта: theme-color или фон страницы. В тёмной теме светлые сайты затемняются — берём чёрный. */
+    private void readPageColor(Tab t) {
+        if (t.web == null) return;
+        t.web.evaluateJavascript("(function(){var m=document.querySelector('meta[name=\"theme-color\"]');"
+                + "var c=m&&m.content;if(!c){c=getComputedStyle(document.body||document.documentElement).backgroundColor}"
+                + "return c||''})()", v -> {
+            int col = parseCss(v == null ? "" : v.replace("\"", ""));
+            if (col == 0 || (Ui.dark && luminance(col) > 0.45)) col = Ui.bg;
+            pageColor = col;
+            if (t == cur && Prefs.statusBar() == 1) animateBar(col);
+        });
+    }
+
+    private static int parseCss(String s) {
+        try {
+            s = s.trim().toLowerCase(Locale.ROOT);
+            if (s.startsWith("#")) {
+                if (s.length() == 4) {
+                    s = "#" + s.charAt(1) + s.charAt(1) + s.charAt(2) + s.charAt(2) + s.charAt(3) + s.charAt(3);
+                }
+                return 0xFF000000 | (int) Long.parseLong(s.substring(1, 7), 16);
+            }
+            if (s.startsWith("rgb")) {
+                String[] p = s.substring(s.indexOf('(') + 1, s.indexOf(')')).split(",");
+                if (p.length >= 4 && Float.parseFloat(p[3].trim()) < 0.5f) return 0;
+                return 0xFF000000 | (Integer.parseInt(p[0].trim()) << 16) | (Integer.parseInt(p[1].trim()) << 8)
+                        | Integer.parseInt(p[2].trim());
+            }
+        } catch (Exception ignored) {
+            // непонятный цвет
+        }
+        return 0;
     }
 
     // ============================================================ плеер YouTube

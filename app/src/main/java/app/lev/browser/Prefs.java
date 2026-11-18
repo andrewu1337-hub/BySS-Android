@@ -31,11 +31,26 @@ final class Prefs {
     static boolean dark() { return b("dark", true); }
     static int wallpaper() { return i("wallpaper", 0); }
     static int appIcon() { return i("app_icon", 0); }
+    /** Название браузера (надпись на главной, ярлыки, тексты). */
+    static String browserName() {
+        String n = s("name", "BySS").trim();
+        return n.isEmpty() ? "BySS" : n;
+    }
+    /** Шрифт надписи на главной (номер варианта, см. BrandLabel). */
+    static int brandFont() { return i("brand_font", 12); }
+    static boolean brandShow() { return b("brand_show", true); }
+    /** Вид вкладок: 0 — стопка, 1 — сетка. */
+    static int tabStyle() { return i("tab_style", 0); }
+    /** Скорость анимаций: 0 — выкл, 1 — быстро, 2 — обычно, 3 — плавно. */
+    static int animSpeed() { return i("anim_speed", 2); }
+    /** Верхняя шторка: 0 — как фон, 1 — цвет сайта (плавно), 2 — прозрачная. */
+    static int statusBar() { return i("status_bar", 0); }
 
     // Поиск
     static String engine() { return s("engine", "google"); }
     static String home1() { return s("home1", "google"); }
     static String home2() { return s("home2", "yandex"); }
+    static String home3() { return s("home3", "ddg"); }
     static String customEngine() { return s("custom_engine", ""); }
 
     // Перевод: device = на телефоне, google / yandex = через их сайт
@@ -51,7 +66,15 @@ final class Prefs {
     static boolean thirdPartyCookies() { return b("cookies_3p", false); }
     static long filtersUpdated() { return sp.getLong("filters_updated", 0L); }
 
+    // Приватные режимы (по умолчанию называются «BySS»)
+    static String incogName() {
+        String n = s("incog_name", "BySS").trim();
+        return n.isEmpty() ? "BySS" : n;
+    }
+
     // Вкладки
+    /** Больше вкладок в одном режиме не открываем: телефону тяжело. */
+    static final int MAX_TABS = 50;
     static int homeAfterMin() { return i("home_after_min", 15); }
     static int tabExpireDays() { return i("tab_expire_days", 7); }
     static long lastBackground() { return sp.getLong("last_background", 0L); }

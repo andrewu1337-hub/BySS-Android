@@ -94,14 +94,14 @@ final class Updater {
         if (!a.getPackageManager().canRequestPackageInstalls()) {
             new AlertDialog.Builder(a)
                     .setTitle("Нужно разрешение")
-                    .setMessage("Разрешите «Лев» устанавливать обновления: в настройках включите "
+                    .setMessage("Разрешите «" + Prefs.browserName() + "» устанавливать обновления: в настройках включите "
                             + "«Разрешить установку из этого источника», вернитесь и нажмите «Обновить браузер» ещё раз.")
                     .setPositiveButton("Открыть настройки", (d, w) -> {
                         try {
                             a.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                                     Uri.parse("package:" + a.getPackageName())));
                         } catch (Exception e) {
-                            Toast.makeText(a, "Откройте настройки телефона → Приложения → Лев", Toast.LENGTH_LONG).show();
+                            Toast.makeText(a, "Откройте настройки телефона → Приложения → " + Prefs.browserName(), Toast.LENGTH_LONG).show();
                         }
                     })
                     .setNegativeButton("Отмена", null)
@@ -116,7 +116,7 @@ final class Updater {
                 new File(dir, "Lev-update.apk").delete();
             }
             DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
-            r.setTitle("Обновление браузера «Лев»");
+            r.setTitle("Обновление браузера «" + Prefs.browserName() + "»");
             r.setMimeType(MIME);
             r.addRequestHeader("User-Agent", "Lev-Browser");
             r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);

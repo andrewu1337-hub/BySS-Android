@@ -56,6 +56,8 @@ final class LongShot {
     private int startY;
     private boolean cropped;
     private boolean cancelled;
+    private boolean stopped;
+    private int captured; // сколько пикселей страницы уже снято
     private boolean finished;
     private boolean scrollbar;
 
@@ -67,6 +69,11 @@ final class LongShot {
 
     void cancel() {
         cancelled = true;
+    }
+
+    /** «Стоп»: больше не листаем, сохраняем то, что уже снято. */
+    void stop() {
+        stopped = true;
     }
 
     void start() {
@@ -107,6 +114,10 @@ final class LongShot {
             finish(false);
             return;
         }
+        if (stopped && frame > 0) {
+            finish(true);
+            return;
+        }
         int sx = web.getScrollX();
         int sy = web.getScrollY();
         int w = web.getWidth();
@@ -127,6 +138,7 @@ final class LongShot {
             return;
         }
         frame++;
+        captured = Math.min(total, sy + h);
         if (frame == 1) web.evaluateJavascript(HIDE_FIXED, null);
         int next = sy + h;
         if (next >= total) {
@@ -153,16 +165,23 @@ final class LongShot {
             listener.done(null, cancelled ? null : "Не получилось снять страницу", false);
             return;
         }
-        boolean part = cropped;
+        boolean part = cropped || (stopped && captured < total);
+        if (stopped && captured > 0 && captured < total) {
+            int ch = Math.max(1, Math.min(b.getHeight(), Math.round(captured * (b.getHeight() / (float) total))));
+            Bitmap cut = Bitmap.createBitmap(b, 0, 0, b.getWidth(), ch);
+            if (cut != b) b.recycle();
+            b = cut;
+        }
+        Bitmap shotBmp = b;
         new Thread(() -> {
             Uri uri = null;
             String err = null;
             try {
-                uri = save(b);
+                uri = save(shotBmp);
             } catch (Throwable e) {
                 err = "Не получилось сохранить: " + e.getMessage();
             } finally {
-                b.recycle();
+                shotBmp.recycle();
             }
             Uri u = uri;
             String er = err;
@@ -170,13 +189,19 @@ final class LongShot {
         }).start();
     }
 
+    /** Папка в Галерее — по названию браузера (без запрещённых символов). */
+    static String folder() {
+        String n = Prefs.browserName().replaceAll("[\\/:*?\"<>|]", "").trim();
+        return n.isEmpty() ? "BySS" : n;
+    }
+
     private Uri save(Bitmap b) throws Exception {
         ContentResolver cr = act.getContentResolver();
         ContentValues v = new ContentValues();
         v.put(MediaStore.Images.Media.DISPLAY_NAME,
-                "Lev_" + DateFormat.format("yyyyMMdd_HHmmss", new Date()) + ".jpg");
+                folder() + "_" + DateFormat.format("yyyyMMdd_HHmmss", new Date()) + ".jpg");
         v.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-        v.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Лев");
+        v.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + folder());
         v.put(MediaStore.Images.Media.IS_PENDING, 1);
         Uri uri = cr.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v);
         if (uri == null) throw new Exception("нет доступа к Галерее");

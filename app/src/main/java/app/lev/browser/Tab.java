@@ -21,7 +21,12 @@ final class Tab {
     LevWebView web;
     /** Спящая вкладка: сохранённая история «назад» (только в памяти). */
     android.os.Bundle state;
+    /** Не используется: картинки вкладок живут в кэше BrowserActivity (экономия памяти). */
     Bitmap thumb;
+    /** Режим BySS, к которому относится вкладка (null — обычный режим). */
+    String space;
+    /** Профиль WebView, в котором сейчас открыта вкладка (null — обычный). */
+    String profile;
     volatile String pageHost;
     final AtomicInteger blocked = new AtomicInteger();
     boolean translated;
@@ -66,6 +71,7 @@ final class Tab {
                 if (t.url != null) o.put("url", t.url);
                 if (t.title != null) o.put("title", t.title);
                 o.put("used", t.lastUsed);
+                if (t.space != null) o.put("space", t.space);
                 a.put(o);
             }
             root.put("tabs", a);
@@ -89,6 +95,7 @@ final class Tab {
                 t.url = o.has("url") ? o.getString("url") : null;
                 t.title = o.has("title") ? o.getString("title") : null;
                 t.lastUsed = o.optLong("used", System.currentTimeMillis());
+                t.space = o.has("space") ? o.getString("space") : null;
                 list.add(t);
             }
             currentOut[0] = root.optLong("current", -1);

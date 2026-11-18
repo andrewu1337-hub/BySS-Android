@@ -29,51 +29,56 @@ import java.util.Locale;
 
 /**
  * Погода вверху начального экрана. Данные — Open-Meteo (бесплатно, без ключа и регистрации).
- * Город выбирается в «Доп. настройки → Начальный экран» или нажатием на саму погоду.
+ * Два города. Выбираются в «Доп. настройки → Начальный экран» или нажатием на саму погоду.
  */
 final class WeatherView extends LinearLayout {
 
     static final String K_ON = "weather_on";
-    private static final String K_CITY = "weather_city";
-    private static final String K_LAT = "weather_lat";
-    private static final String K_LON = "weather_lon";
-    private static final String K_DATA = "weather_data";
-    private static final String K_TIME = "weather_time";
-    private static final long FRESH_MS = 30 * 60 * 1000L;
+    /** Погода обновляется раз в 10 минут (и только пока виден начальный экран). */
+    static final long FRESH_MS = 10 * 60 * 1000L;
 
-    private static volatile boolean loading;
+    /** Ключ настройки для города 1 или 2. */
+    private static String k(int slot, String name) {
+        return (slot == 2 ? "weather2_" : "weather_") + name;
+    }
+
+    private final int slot;
+    private boolean loading;
 
     private final Icon icon;
     private final TextView temp;
     private final TextView line;
 
-    WeatherView(Context c) {
+    WeatherView(Context c, int slot) {
         super(c);
+        this.slot = slot;
         setOrientation(HORIZONTAL);
         setGravity(Gravity.CENTER_VERTICAL);
-        setPadding(0, Ui.dp(c, 4), Ui.dp(c, 8), Ui.dp(c, 4));
+        setPadding(0, Ui.dp(c, 3), Ui.dp(c, 8), Ui.dp(c, 3));
         icon = new Icon(c);
-        addView(icon, new LayoutParams(Ui.dp(c, 38), Ui.dp(c, 38)));
+        addView(icon, new LayoutParams(Ui.dp(c, 30), Ui.dp(c, 30)));
         LinearLayout texts = new LinearLayout(c);
         texts.setOrientation(VERTICAL);
-        texts.setPadding(Ui.dp(c, 12), 0, 0, 0);
-        temp = Ui.text(c, "", 30, Ui.text, false);
+        texts.setPadding(Ui.dp(c, 10), 0, 0, 0);
+        temp = Ui.text(c, "", 22, Ui.text, false);
         temp.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
         temp.setIncludeFontPadding(false);
-        line = Ui.text(c, "", 13, Ui.text2, false);
+        line = Ui.text(c, "", 12, Ui.text2, false);
+        line.setSingleLine(true);
+        line.setEllipsize(android.text.TextUtils.TruncateAt.END);
         texts.addView(temp);
         texts.addView(line);
         addView(texts, new LayoutParams(-2, -2));
         setOnClickListener(v -> {
             Haptics.click(v);
-            if (city().isEmpty() && getContext() instanceof Activity) {
-                pickCity((Activity) getContext(), this::refresh);
+            if (city(slot).isEmpty() && getContext() instanceof Activity) {
+                pickCity((Activity) getContext(), slot, this::refresh);
             } else {
                 load(true);
             }
         });
         setOnLongClickListener(v -> {
-            if (getContext() instanceof Activity) pickCity((Activity) getContext(), this::refresh);
+            if (getContext() instanceof Activity) pickCity((Activity) getContext(), slot, this::refresh);
             return true;
         });
     }
@@ -82,14 +87,21 @@ final class WeatherView extends LinearLayout {
         return Prefs.sp().getBoolean(K_ON, true);
     }
 
-    static String city() {
-        return Prefs.sp().getString(K_CITY, "");
+    static String city(int slot) {
+        return Prefs.sp().getString(k(slot, "city"), "");
     }
 
     /** Для настроек: «Прага, Чехия» или «не выбран». */
-    static String summary() {
-        String c = city();
+    static String summary(int slot) {
+        String c = city(slot);
         return c.isEmpty() ? "Не выбран — нажмите, чтобы найти" : c;
+    }
+
+    /** Обновить, если данные старше 10 минут (вызывается по таймеру с начального экрана). */
+    void refreshIfStale() {
+        if (!enabled() || city(slot).isEmpty()) return;
+        long age = System.currentTimeMillis() - Prefs.sp().getLong(k(slot, "time"), 0L);
+        if (age > FRESH_MS) load(false);
     }
 
     void refresh() {
@@ -101,23 +113,22 @@ final class WeatherView extends LinearLayout {
         temp.setTextColor(Ui.text);
         line.setTextColor(Ui.text2);
         icon.invalidate();
-        if (city().isEmpty()) {
+        if (city(slot).isEmpty()) {
             icon.kind = Icon.PARTLY;
             temp.setVisibility(GONE);
-            line.setText("Погода — нажмите, чтобы выбрать город");
+            line.setText(slot == 1 ? "Погода — выбрать город" : "＋ второй город");
             return;
         }
         show();
-        long age = System.currentTimeMillis() - Prefs.sp().getLong(K_TIME, 0L);
-        if (age > FRESH_MS) load(false);
+        refreshIfStale();
     }
 
     private void show() {
-        String name = city();
+        String name = city(slot);
         int comma = name.indexOf(',');
         String shortName = comma > 0 ? name.substring(0, comma) : name;
         try {
-            JSONObject d = new JSONObject(Prefs.sp().getString(K_DATA, "{}"));
+            JSONObject d = new JSONObject(Prefs.sp().getString(k(slot, "data"), "{}"));
             if (!d.has("t")) {
                 temp.setVisibility(GONE);
                 line.setText(shortName + " · загружаю погоду…");
@@ -143,10 +154,10 @@ final class WeatherView extends LinearLayout {
     }
 
     private void load(boolean byUser) {
-        if (loading || city().isEmpty()) return;
+        if (loading || city(slot).isEmpty()) return;
         loading = true;
-        String lat = Prefs.sp().getString(K_LAT, "");
-        String lon = Prefs.sp().getString(K_LON, "");
+        String lat = Prefs.sp().getString(k(slot, "lat"), "");
+        String lon = Prefs.sp().getString(k(slot, "lon"), "");
         new Thread(() -> {
             boolean ok = false;
             try {
@@ -164,7 +175,7 @@ final class WeatherView extends LinearLayout {
                     d.put("max", daily.getJSONArray("temperature_2m_max").getDouble(0));
                     d.put("min", daily.getJSONArray("temperature_2m_min").getDouble(0));
                 }
-                Prefs.sp().edit().putString(K_DATA, d.toString()).putLong(K_TIME, System.currentTimeMillis()).apply();
+                Prefs.sp().edit().putString(k(slot, "data"), d.toString()).putLong(k(slot, "time"), System.currentTimeMillis()).apply();
                 ok = true;
             } catch (Exception ignored) {
                 // нет сети — покажем последнюю известную погоду
@@ -197,11 +208,11 @@ final class WeatherView extends LinearLayout {
     // ------------------------------------------------------------ выбор города
 
     /** Поиск города по названию (Open-Meteo Geocoding) и выбор из списка. */
-    static void pickCity(Activity a, Runnable done) {
+    static void pickCity(Activity a, int slot, Runnable done) {
         EditText e = new EditText(a);
         e.setSingleLine(true);
         e.setHint("Например: Прага, Амстердам, Москва");
-        e.setText(cityName());
+        e.setText(cityName(slot));
         e.setSelectAllOnFocus(true);
         e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
         e.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
@@ -209,16 +220,22 @@ final class WeatherView extends LinearLayout {
         int p = Ui.dp(a, 22);
         box.setPadding(p, Ui.dp(a, 8), p, 0);
         box.addView(e);
-        AlertDialog d = new AlertDialog.Builder(a)
-                .setTitle("Город для погоды")
+        AlertDialog.Builder b = new AlertDialog.Builder(a)
+                .setTitle(slot == 2 ? "Второй город для погоды" : "Город для погоды")
                 .setView(box)
-                .setPositiveButton("Найти", (x, w) -> search(a, e.getText().toString().trim(), done))
-                .setNegativeButton("Отмена", null)
-                .create();
+                .setPositiveButton("Найти", (x, w) -> search(a, slot, e.getText().toString().trim(), done))
+                .setNegativeButton("Отмена", null);
+        if (!city(slot).isEmpty()) {
+            b.setNeutralButton("Убрать", (x, w) -> {
+                Prefs.sp().edit().remove(k(slot, "city")).remove(k(slot, "data")).remove(k(slot, "time")).apply();
+                if (done != null) done.run();
+            });
+        }
+        AlertDialog d = b.create();
         e.setOnEditorActionListener((v, id, ev) -> {
             if (id == EditorInfo.IME_ACTION_SEARCH) {
                 d.dismiss();
-                search(a, e.getText().toString().trim(), done);
+                search(a, slot, e.getText().toString().trim(), done);
                 return true;
             }
             return false;
@@ -226,13 +243,13 @@ final class WeatherView extends LinearLayout {
         d.show();
     }
 
-    private static String cityName() {
-        String c = city();
+    private static String cityName(int slot) {
+        String c = city(slot);
         int comma = c.indexOf(',');
         return comma > 0 ? c.substring(0, comma) : c;
     }
 
-    private static void search(Activity a, String q, Runnable done) {
+    private static void search(Activity a, int slot, String q, Runnable done) {
         if (q.isEmpty()) return;
         Toast.makeText(a, "Ищу «" + q + "»…", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
@@ -269,11 +286,11 @@ final class WeatherView extends LinearLayout {
                             String country = o.optString("country");
                             String name = o.optString("name") + (country.isEmpty() ? "" : ", " + country);
                             Prefs.sp().edit()
-                                    .putString(K_CITY, name)
-                                    .putString(K_LAT, String.format(Locale.ROOT, "%.4f", o.optDouble("latitude")))
-                                    .putString(K_LON, String.format(Locale.ROOT, "%.4f", o.optDouble("longitude")))
-                                    .remove(K_DATA)
-                                    .putLong(K_TIME, 0L)
+                                    .putString(k(slot, "city"), name)
+                                    .putString(k(slot, "lat"), String.format(Locale.ROOT, "%.4f", o.optDouble("latitude")))
+                                    .putString(k(slot, "lon"), String.format(Locale.ROOT, "%.4f", o.optDouble("longitude")))
+                                    .remove(k(slot, "data"))
+                                    .putLong(k(slot, "time"), 0L)
                                     .putBoolean(K_ON, true)
                                     .apply();
                             if (done != null) done.run();

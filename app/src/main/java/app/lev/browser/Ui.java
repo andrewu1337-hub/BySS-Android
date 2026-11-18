@@ -55,6 +55,16 @@ final class Ui {
         }
     }
 
+    /** Длительность анимации с учётом настройки «Скорость анимаций». */
+    static long anim(long ms) {
+        switch (Prefs.animSpeed()) {
+            case 0: return 0;
+            case 1: return Math.round(ms * 0.6);
+            case 3: return Math.round(ms * 1.5);
+            default: return ms;
+        }
+    }
+
     static int dp(Context c, float v) {
         return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v,
                 c.getResources().getDisplayMetrics()));
