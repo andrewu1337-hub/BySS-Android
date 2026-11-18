@@ -138,6 +138,7 @@ public class BrowserActivity extends Activity {
     protected void onCreate(Bundle state) {
         Prefs.init(this);
         SitePrefs.init(this);
+        CrashLog.install(this);
         boolean dark = Prefs.dark();
         builtDark = dark;
         setTheme(dark ? R.style.Theme_Lev_Dark : R.style.Theme_Lev_Light);
@@ -153,6 +154,7 @@ public class BrowserActivity extends Activity {
         buildUi();
         setupEdgeToEdge();
         applyStatusBar();
+        root.post(() -> CrashLog.offer(this));
         restoreTabs();
         boolean opened = handleIntent(getIntent());
         if (!opened) {
@@ -955,7 +957,7 @@ public class BrowserActivity extends Activity {
         w.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
         w.setOnScrollChangeListener((v, x, y, ox, oy) -> {
             int mode = Prefs.statusBar();
-            if (t == cur && mode != 0) scheduleSample(mode == 2 ? 90 : 220); // шапка сайта меняет цвет при прокрутке
+            if (t == cur && mode != 0) sampleAfterScroll(mode == 2 ? 120 : 220); // шапка меняет цвет при прокрутке
         });
 
         WebSettings s = w.getSettings();
@@ -2385,6 +2387,13 @@ public class BrowserActivity extends Activity {
 
     private void scheduleSample(long delay) {
         if (samplePending) return;
+        samplePending = true;
+        barHandler.postDelayed(sampleRun, delay);
+    }
+
+    /** Во время прокрутки цвет не читаем (чтобы не лагало) — только когда палец/прокрутка остановились. */
+    private void sampleAfterScroll(long delay) {
+        barHandler.removeCallbacks(sampleRun);
         samplePending = true;
         barHandler.postDelayed(sampleRun, delay);
     }

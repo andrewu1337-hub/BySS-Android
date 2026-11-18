@@ -60,6 +60,8 @@ final class TabStackView extends FrameLayout {
     private int touched = -1;
     private int lastTick = Integer.MIN_VALUE;
     private boolean busy;
+    /** Жест начался, пока карточка улетала, — его целиком пропускаем (иначе номер карточки уже не тот). */
+    private boolean ignoreGesture;
     private boolean grid;
     private int cardW, side, cols = 1;
 
@@ -306,7 +308,9 @@ final class TabStackView extends FrameLayout {
         head.addView(title, new LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f));
         ImageButton close = Ui.iconButton(c, R.drawable.ic_close);
         close.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.text2));
-        close.setOnClickListener(v -> dismiss(cards.indexOf(card), 1));
+        close.setOnClickListener(v -> {
+            if (!busy) dismiss(cards.indexOf(card), 1);
+        });
         head.addView(close, new LinearLayout.LayoutParams(Ui.dp(c, 44), Ui.dp(c, 44)));
         card.addView(head, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, Ui.dp(c, 44)));
 
@@ -341,9 +345,14 @@ final class TabStackView extends FrameLayout {
         return -1;
     }
 
+    private boolean valid(int i) {
+        return i >= 0 && i < cards.size() && i < tabs.size();
+    }
+
     @Override
     public boolean onInterceptTouchEvent(MotionEvent e) {
-        if (busy) return true;
+        if (e.getActionMasked() == MotionEvent.ACTION_DOWN) ignoreGesture = busy;
+        if (busy || ignoreGesture) return true;
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 start(e);
@@ -382,7 +391,16 @@ final class TabStackView extends FrameLayout {
     @SuppressLint("ClickableViewAccessibility")
     @Override
     public boolean onTouchEvent(MotionEvent e) {
-        if (busy) return true;
+        int act = e.getActionMasked();
+        if (act == MotionEvent.ACTION_DOWN) ignoreGesture = busy;
+        if (busy || ignoreGesture) {
+            if (act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_CANCEL) {
+                ignoreGesture = false;
+                mode = 0;
+                touched = -1;
+            }
+            return true;
+        }
         if (vt == null) vt = VelocityTracker.obtain();
         vt.addMovement(e);
         switch (e.getActionMasked()) {
@@ -390,14 +408,19 @@ final class TabStackView extends FrameLayout {
                 start(e);
                 return true;
             case MotionEvent.ACTION_MOVE: {
+                int was = mode;
                 decide(e);
+                if (mode == 2 && was != 2 && valid(touched)) {
+                    // карточка с картинкой и прозрачностью — рисуем её одним слоем, чтобы не лагало
+                    cards.get(touched).setLayerType(LAYER_TYPE_HARDWARE, null);
+                }
                 if (mode == 1) {
                     float dy = e.getY() - lastY;
                     float next = scroll - dy;
                     if (next < 0 || next > maxScroll) next = scroll - dy * 0.35f; // упругий край
                     scroll = next;
                     layoutCards();
-                } else if (mode == 2 && touched >= 0) {
+                } else if (mode == 2 && valid(touched)) {
                     View v = cards.get(touched);
                     float dx = e.getX() - downX;
                     v.setTranslationX(dx);
@@ -414,20 +437,22 @@ final class TabStackView extends FrameLayout {
                 boolean cancel = e.getActionMasked() == MotionEvent.ACTION_CANCEL;
                 if (mode == 1) {
                     fling(vy);
-                } else if (mode == 2 && touched >= 0) {
+                } else if (mode == 2 && valid(touched)) {
                     View v = cards.get(touched);
                     float dx = v.getTranslationX();
                     if (!cancel && (Math.abs(dx) > getWidth() * 0.33f || Math.abs(vx) > 1800)) {
                         dismiss(touched, dx == 0 ? 1 : (int) Math.signum(dx));
                     } else {
-                        v.animate().translationX(0).alpha(1f).setDuration(Ui.anim(220)).setInterpolator(ease).start();
+                        v.animate().translationX(0).alpha(1f).setDuration(Ui.anim(220)).setInterpolator(ease)
+                                .withEndAction(() -> v.setLayerType(LAYER_TYPE_NONE, null)).start();
                     }
-                } else if (!cancel && touched >= 0) {
+                } else if (!cancel && valid(touched)) {
                     open(touched);
                 }
                 vt.recycle();
                 vt = null;
                 mode = 0;
+                touched = -1;
                 return true;
             }
             default:
@@ -454,16 +479,19 @@ final class TabStackView extends FrameLayout {
     }
 
     private void dismiss(int index, int dir) {
-        if (index < 0 || index >= cards.size()) return;
+        if (busy || !valid(index)) return;
         busy = true;
         View v = cards.get(index);
         Tab t = tabs.get(index);
         Haptics.thud(this);
+        v.setLayerType(LAYER_TYPE_HARDWARE, null);
         v.animate().translationX(dir * getWidth() * 1.1f).alpha(0f).setDuration(Ui.anim(200))
                 .setInterpolator(ease).withEndAction(() -> {
                     deck.removeView(v);
-                    cards.remove(index);
-                    tabs.remove(index);
+                    int ci = cards.indexOf(v);
+                    if (ci >= 0) cards.remove(ci);
+                    tabs.remove(t);
+                    touched = -1;
                     listener.onClose(t);
                     updateCount();
                     float before = scroll;
@@ -473,8 +501,9 @@ final class TabStackView extends FrameLayout {
                     List<Float> from = new ArrayList<>();
                     for (View cv : cards) from.add(cv.getTranslationY());
                     layoutCards();
-                    for (int i = 0; i < cards.size(); i++) {
+                    for (int i = 0; i < cards.size() && i < from.size(); i++) {
                         View cv = cards.get(i);
+                        if (cv.getVisibility() != VISIBLE) continue; // невидимые не анимируем — меньше лагов
                         float to = cv.getTranslationY();
                         cv.setTranslationY(from.get(i));
                         cv.animate().translationY(to).setDuration(Ui.anim(260)).setInterpolator(ease).start();
@@ -485,7 +514,7 @@ final class TabStackView extends FrameLayout {
     }
 
     private void open(int index) {
-        if (index < 0 || index >= cards.size()) return;
+        if (busy || !valid(index)) return;
         busy = true;
         Haptics.click(this);
         View v = cards.get(index);
