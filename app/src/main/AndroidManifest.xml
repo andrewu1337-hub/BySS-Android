@@ -107,6 +107,10 @@
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode"
             android:exported="false" />
 
+        <receiver
+            android:name=".UpdateReceiver"
+            android:exported="false" />
+
         <service
             android:name=".MediaService"
             android:exported="false"

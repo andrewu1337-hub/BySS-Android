@@ -209,6 +209,7 @@ public class BrowserActivity extends Activity {
         applyStatusBar();
         updateBars();
         Icons.applyTask(this);
+        Updater.onResume(this);
     }
 
     @Override
