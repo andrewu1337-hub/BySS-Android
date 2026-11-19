@@ -117,6 +117,13 @@ public class BrowserActivity extends Activity {
     private boolean menuOpen;
     private boolean skipHomeOnce;
     private BroadcastReceiver downloadsDone;
+    /** Кнопка «⋮»: пока что-то скачивается, она мигает зелёной стрелкой. */
+    private ImageButton menuBtn;
+    private boolean dlArrow;
+    private boolean dlOpen;
+    private final Runnable dlTick = this::downloadTick;
+    private final java.util.Map<Long, View[]> dlRows = new java.util.HashMap<>();
+    private LinearLayout dlList;
 
     private final Runnable refreshShield = this::updateShield;
 
@@ -165,6 +172,7 @@ public class BrowserActivity extends Activity {
             @Override
             public void onReceive(Context c, Intent i) {
                 Toast.makeText(c, "Файл скачан — Меню → Скачанные файлы", Toast.LENGTH_SHORT).show();
+                watchDownloads();
             }
         };
         IntentFilter f = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
@@ -210,6 +218,7 @@ public class BrowserActivity extends Activity {
         updateBars();
         Icons.applyTask(this);
         Updater.onResume(this);
+        watchDownloads();
     }
 
     @Override
@@ -240,6 +249,7 @@ public class BrowserActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        ui.removeCallbacks(dlTick);
         if (downloadsDone != null) {
             try {
                 unregisterReceiver(downloadsDone);
@@ -481,6 +491,7 @@ public class BrowserActivity extends Activity {
         tabsBtn.setBackground(Ui.outline(Ui.text, Ui.dp(c, 1.6f), Ui.dp(c, 6)));
         tabsWrap.addView(tabsBtn, new FrameLayout.LayoutParams(Ui.dp(c, 22), Ui.dp(c, 22), Gravity.CENTER));
         ImageButton menu = Ui.iconButton(c, R.drawable.ic_menu);
+        menuBtn = menu;
         menu.setOnClickListener(v -> {
             Haptics.click(v);
             if (menuOpen) closeMenu(); else openMenu();
@@ -1396,8 +1407,9 @@ public class BrowserActivity extends Activity {
             r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
             r.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
             DownloadManager dm = getSystemService(DownloadManager.class);
-            dm.enqueue(r);
-            Toast.makeText(this, "Скачивается: " + name, Toast.LENGTH_SHORT).show();
+            Downloads.remember(dm.enqueue(r));
+            Toast.makeText(this, "Скачивается: " + name + " — смотрите Меню → Скачанные файлы", Toast.LENGTH_SHORT).show();
+            watchDownloads();
         } catch (Exception e) {
             Toast.makeText(this, "Не удалось скачать: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
@@ -1849,13 +1861,9 @@ public class BrowserActivity extends Activity {
             items.add(new Object[]{R.drawable.ic_copy, "Выделить и скопировать текст", null, (Runnable) this::pageText});
         }
         items.add(new Object[]{R.drawable.ic_reload, "Обновить браузер", null, (Runnable) () -> Updater.check(this)});
-        items.add(new Object[]{R.drawable.ic_download, "Скачанные файлы", null, (Runnable) () -> {
-            try {
-                startActivity(new Intent(DownloadManager.ACTION_VIEW_DOWNLOADS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-            } catch (Exception e) {
-                Toast.makeText(this, "Откройте приложение «Файлы» → Загрузки", Toast.LENGTH_SHORT).show();
-            }
-        }});
+        int dlNow = Downloads.active(this);
+        items.add(new Object[]{R.drawable.ic_download, "Скачанные файлы", dlNow > 0 ? "↓ " + dlNow : null,
+                (Runnable) this::openDownloads});
         items.add(new Object[]{R.drawable.ic_settings, "Доп. настройки", null,
                 (Runnable) () -> startActivity(new Intent(this, SettingsActivity.class))});
         items.add(new Object[]{R.drawable.ic_theme, Ui.dark ? "Светлая тема" : "Тёмная тема", null, (Runnable) () -> {
@@ -2065,10 +2073,232 @@ public class BrowserActivity extends Activity {
     private void closeMenu() {
         if (!menuOpen) return;
         menuOpen = false;
+        dlOpen = false;
+        dlList = null;
+        dlRows.clear();
         overlay.animate().alpha(0f).setDuration(Ui.anim(140)).withEndAction(() -> {
             overlay.setVisibility(View.GONE);
             overlay.removeAllViews();
         }).start();
+    }
+
+    // ============================================================ скачанные файлы
+
+    private static int dlGreen() {
+        return Ui.dark ? 0xFF30D158 : 0xFF248A3D;
+    }
+
+    /** Проверять загрузки: пока что-то качается — «⋮» мигает зелёной стрелкой. */
+    private void watchDownloads() {
+        ui.removeCallbacks(dlTick);
+        ui.post(dlTick);
+    }
+
+    private void downloadTick() {
+        List<Downloads.Item> list = Downloads.list(this);
+        int active = 0;
+        for (Downloads.Item it : list) if (it.active()) active++;
+        if (dlOpen) fillDownloads(list);
+        if (active > 0) {
+            dlArrow = !dlArrow;
+            setMenuIcon(dlArrow);
+            ui.postDelayed(dlTick, 750);
+        } else if (dlArrow) {
+            dlArrow = false;
+            setMenuIcon(false);
+        }
+    }
+
+    /** «⋮» ↔ зелёная стрелка «скачивается»: мягкая смена, стрелка чуть «опускается» вниз. */
+    private void setMenuIcon(boolean arrow) {
+        ImageButton b = menuBtn;
+        if (b == null) return;
+        b.animate().cancel();
+        b.animate().alpha(0f).setDuration(Ui.anim(110)).withEndAction(() -> {
+            b.setImageResource(arrow ? R.drawable.ic_download : R.drawable.ic_menu);
+            b.setImageTintList(ColorStateList.valueOf(arrow ? dlGreen() : Ui.text));
+            b.setContentDescription(arrow ? "Меню · идёт загрузка" : "Меню");
+            b.setTranslationY(arrow ? -Ui.dp(this, 4) : 0);
+            b.animate().alpha(1f).translationY(0).setDuration(Ui.anim(arrow ? 420 : 150))
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+        }).start();
+    }
+
+    /** Список загрузок браузера, как в Chrome: что скачивается и что уже скачано. */
+    private void openDownloads() {
+        Context c = this;
+        overlay.animate().cancel(); // меню только что закрылось — его анимация не должна убрать этот список
+        menuOpen = true;
+        dlOpen = true;
+        dlRows.clear();
+        overlay.removeAllViews();
+        overlay.setBackgroundColor(Ui.scrim);
+        overlay.setVisibility(View.VISIBLE);
+        overlay.setAlpha(0f);
+        overlay.animate().alpha(1f).setDuration(Ui.anim(160)).start();
+        overlay.setOnClickListener(v -> closeMenu());
+
+        LinearLayout panel = new LinearLayout(c);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackground(Ui.round(Ui.card, Ui.dp(c, 20)));
+        panel.setElevation(Ui.dp(c, 14));
+        panel.setPadding(0, Ui.dp(c, 8), 0, Ui.dp(c, 8));
+        panel.setClickable(true);
+
+        TextView title = Ui.text(c, "Скачанные файлы", 17, Ui.text, true);
+        title.setPadding(Ui.dp(c, 18), Ui.dp(c, 6), Ui.dp(c, 18), Ui.dp(c, 6));
+        panel.addView(title, new LinearLayout.LayoutParams(-1, Ui.dp(c, 44)));
+
+        android.widget.ScrollView sv = new android.widget.ScrollView(c);
+        dlList = new LinearLayout(c);
+        dlList.setOrientation(LinearLayout.VERTICAL);
+        sv.addView(dlList, new FrameLayout.LayoutParams(-1, -2));
+        int maxH = Math.round(getResources().getDisplayMetrics().heightPixels * 0.55f);
+        panel.addView(sv, new LinearLayout.LayoutParams(-1, -2));
+        sv.post(() -> {
+            if (sv.getHeight() > maxH) {
+                sv.getLayoutParams().height = maxH;
+                sv.requestLayout();
+            }
+        });
+
+        View line = new View(c);
+        line.setBackgroundColor(Ui.line);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, Ui.dp(c, 1));
+        lp.setMargins(Ui.dp(c, 16), Ui.dp(c, 6), Ui.dp(c, 16), Ui.dp(c, 2));
+        panel.addView(line, lp);
+        menuItem(panel, R.drawable.ic_forward, "Все загрузки телефона", null, Ui.text2, () -> Downloads.openSystem(this));
+
+        FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+        pp.leftMargin = Ui.dp(c, 10);
+        pp.rightMargin = Ui.dp(c, 10);
+        pp.bottomMargin = bottom.getHeight() + Ui.dp(c, 8);
+        overlay.addView(panel, pp);
+        fillDownloads(Downloads.list(this));
+        panel.setTranslationY(Ui.dp(c, 24));
+        panel.setAlpha(0f);
+        panel.animate().translationY(0).alpha(1f).setDuration(Ui.anim(200))
+                .setInterpolator(new android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f)).start();
+        watchDownloads();
+    }
+
+    /** Обновить строки на месте (не пересоздавая) — нажатия не теряются. */
+    private void fillDownloads(List<Downloads.Item> list) {
+        LinearLayout box = dlList;
+        if (box == null) return;
+        Context c = this;
+        if (list.isEmpty()) {
+            if (box.getChildCount() == 0) {
+                TextView empty = Ui.text(c, "Пока ничего не скачано", 14, Ui.text2, false);
+                empty.setGravity(Gravity.CENTER);
+                box.addView(empty, new LinearLayout.LayoutParams(-1, Ui.dp(c, 72)));
+            }
+            return;
+        }
+        if (dlRows.isEmpty()) box.removeAllViews(); // убрать «Пока ничего не скачано»
+        java.util.Set<Long> alive = new HashSet<>();
+        for (int i = 0; i < list.size(); i++) {
+            Downloads.Item it = list.get(i);
+            alive.add(it.id);
+            View[] r = dlRows.get(it.id);
+            if (r == null) {
+                r = downloadRow(it.id);
+                dlRows.put(it.id, r);
+                box.addView(r[0], Math.min(i, box.getChildCount()));
+            }
+            bindRow(r, it);
+        }
+        for (java.util.Iterator<java.util.Map.Entry<Long, View[]>> en = dlRows.entrySet().iterator(); en.hasNext(); ) {
+            java.util.Map.Entry<Long, View[]> e = en.next();
+            if (!alive.contains(e.getKey())) {
+                box.removeView(e.getValue()[0]);
+                en.remove();
+            }
+        }
+    }
+
+    /** [строка, значок, имя, статус, полоска, заполнение, кнопка ×] */
+    private View[] downloadRow(long id) {
+        Context c = this;
+        LinearLayout row = new LinearLayout(c);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(Ui.dp(c, 18), Ui.dp(c, 8), Ui.dp(c, 8), Ui.dp(c, 8));
+        row.setBackground(Ui.ripple(null, Ui.round(0xFFFFFFFF, 0)));
+
+        ImageView ic = new ImageView(c);
+        ic.setImageResource(R.drawable.ic_download);
+        row.addView(ic, new LinearLayout.LayoutParams(Ui.dp(c, 22), Ui.dp(c, 22)));
+
+        LinearLayout texts = new LinearLayout(c);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.setPadding(Ui.dp(c, 16), 0, Ui.dp(c, 8), 0);
+        TextView name = Ui.text(c, "", 15, Ui.text, false);
+        name.setSingleLine(true);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        TextView status = Ui.text(c, "", 12, Ui.text2, false);
+        status.setSingleLine(true);
+        FrameLayout track = new FrameLayout(c);
+        track.setBackground(Ui.round(Ui.line, Ui.dp(c, 2)));
+        View fill = new View(c);
+        fill.setBackground(Ui.round(dlGreen(), Ui.dp(c, 2)));
+        track.addView(fill, new FrameLayout.LayoutParams(0, -1));
+        texts.addView(name, new LinearLayout.LayoutParams(-1, -2));
+        texts.addView(status, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, Ui.dp(c, 3));
+        tp.topMargin = Ui.dp(c, 6);
+        texts.addView(track, tp);
+        row.addView(texts, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        ImageButton x = Ui.iconButton(c, R.drawable.ic_close);
+        x.setImageTintList(ColorStateList.valueOf(Ui.text2));
+        row.addView(x, new LinearLayout.LayoutParams(Ui.dp(c, 44), Ui.dp(c, 44)));
+        return new View[]{row, ic, name, status, track, fill, x};
+    }
+
+    private void bindRow(View[] r, Downloads.Item it) {
+        ImageView ic = (ImageView) r[1];
+        TextView name = (TextView) r[2];
+        TextView status = (TextView) r[3];
+        View track = r[4];
+        View fill = r[5];
+        ImageButton x = (ImageButton) r[6];
+        if (!it.name.contentEquals(name.getText())) name.setText(it.name);
+        String line = it.line();
+        if (!line.contentEquals(status.getText())) status.setText(line);
+        int tint = it.done() ? Ui.text : it.status == DownloadManager.STATUS_FAILED ? Ui.danger : dlGreen();
+        ic.setImageTintList(ColorStateList.valueOf(tint));
+        track.setVisibility(it.active() ? View.VISIBLE : View.GONE);
+        if (it.active()) {
+            float f = it.fraction();
+            track.post(() -> {
+                int w = track.getWidth();
+                FrameLayout.LayoutParams fp = (FrameLayout.LayoutParams) fill.getLayoutParams();
+                fp.width = f < 0 ? Math.round(w * 0.3f) : Math.round(w * f);
+                fill.setLayoutParams(fp);
+            });
+        }
+        x.setContentDescription(it.active() ? "Отменить загрузку" : "Убрать из списка");
+        long id = it.id;
+        boolean active = it.active();
+        x.setOnClickListener(v -> {
+            Haptics.click(v);
+            if (active) {
+                Downloads.cancel(this, id);
+                Toast.makeText(this, "Загрузка отменена", Toast.LENGTH_SHORT).show();
+            } else {
+                Downloads.forget(id); // файл остаётся в «Загрузках»
+            }
+            watchDownloads();
+        });
+        boolean done = it.done();
+        r[0].setOnClickListener(v -> {
+            Haptics.click(v);
+            if (done) {
+                closeMenu();
+                Downloads.open(this, it);
+            }
+        });
     }
 
     private void confirmWipe() {
