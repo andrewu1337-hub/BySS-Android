@@ -244,10 +244,35 @@ final class HomeView extends FrameLayout {
         return slot == 1 ? Prefs.home1() : slot == 2 ? Prefs.home2() : Prefs.home3();
     }
 
+    /** Третья строка — конвертер валют (вместо третьего поиска). */
+    static final String FX = "currency";
+
+    private static boolean isFx(int slot) {
+        return slot == 3 && FX.equals(Prefs.home3());
+    }
+
+    private void openFx() {
+        FxDialog.show(getContext(), listener::onOpen, () -> {
+            if (isFx(3)) styleFx(badges[2], fields[2]);
+        });
+    }
+
     private void wire(TextView badge, EditText field, int slot) {
         badge.setOnClickListener(v -> {
             Haptics.click(v);
+            if (isFx(slot)) openFx();
+            else listener.onPickEngine(slot);
+        });
+        badge.setOnLongClickListener(v -> {
+            Haptics.thud(v);
             listener.onPickEngine(slot);
+            return true;
+        });
+        field.setOnClickListener(v -> {
+            if (isFx(slot)) {
+                Haptics.click(v);
+                openFx();
+            }
         });
         field.setOnEditorActionListener((v, actionId, event) -> {
             boolean go = actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_GO
@@ -302,12 +327,48 @@ final class HomeView extends FrameLayout {
                 new int[]{Ui.dark ? 0x33000000 : 0x00FFFFFF, Ui.dark ? 0x66000000 : 0x00FFFFFF});
         shade.setBackground(g);
 
-        for (int i = 0; i < 3; i++) styleSearch(badges[i], fields[i], SearchEngines.get(engineFor(i + 1)));
+        for (int i = 0; i < 3; i++) {
+            if (isFx(i + 1)) styleFx(badges[i], fields[i]);
+            else styleSearch(badges[i], fields[i], SearchEngines.get(engineFor(i + 1)));
+        }
+        if (isFx(3)) Fx.refresh(false, ok -> {
+            if (isFx(3)) styleFx(badges[2], fields[2]);
+        });
         buildGrid(c);
+    }
+
+    /** Строка конвертера: «1 € = 19,62 MDL · 1,05 USD», нажатие — окно конвертера. */
+    private void styleFx(TextView badge, EditText field) {
+        Context c = getContext();
+        ViewGroup row = (ViewGroup) badge.getParent();
+        row.setBackground(Ui.round(Ui.dark ? 0xD91C1C1E : 0xF2EBEBEF, Ui.dp(c, 25)));
+        row.setElevation(Ui.dp(c, 3));
+        String b = Fx.base();
+        badge.setText(Fx.symbol(b));
+        badge.setTextColor(Ui.tileGlyph);
+        badge.setTextSize(Fx.symbol(b).length() > 1 ? 12 : 16);
+        badge.setBackground(Ui.ripple(Ui.round(Ui.dark ? 0xFF2C2C2E : 0xFFDCDCE1, Ui.dp(c, 17)), null));
+        field.setFocusable(false);
+        field.setFocusableInTouchMode(false);
+        field.setCursorVisible(false);
+        field.setLongClickable(false);
+        field.setHint("Конвертер валют");
+        field.setHintTextColor(Ui.text2);
+        field.setTextColor(Ui.text);
+        field.setText(Fx.ready() ? Fx.summary() : "");
+        field.setContentDescription("Конвертер валют");
     }
 
     private void styleSearch(TextView badge, EditText field, SearchEngines.Engine e) {
         Context c = getContext();
+        if (!field.isFocusableInTouchMode()) { // строка снова стала поиском
+            field.setText("");
+            field.setFocusable(true);
+            field.setFocusableInTouchMode(true);
+            field.setCursorVisible(true);
+            field.setLongClickable(true);
+            field.setContentDescription(null);
+        }
         ViewGroup row = (ViewGroup) badge.getParent();
         row.setBackground(Ui.round(Ui.dark ? 0xD91C1C1E : 0xF2EBEBEF, Ui.dp(c, 25)));
         row.setElevation(Ui.dp(c, 3));

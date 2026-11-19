@@ -16,9 +16,10 @@ import java.io.OutputStream;
 import java.util.Date;
 
 /**
- * Длинный скриншот всей страницы: прокручиваем экран за экраном и склеиваем кадры.
- * Шапки и кнопки, «прилипшие» к экрану, после первого кадра прячем, чтобы не повторялись.
- * Очень длинную страницу уменьшаем, чтобы влезла целиком; режем только бесконечные ленты.
+ * Длинный скриншот: прокручиваем экран за экраном и склеиваем кадры — всю страницу или
+ * участок [from, to), который человек выбрал сам. Пока снимаем, страница закрыта «замороженной»
+ * картинкой, поэтому прыжков не видно. Шапки и кнопки, «прилипшие» к экрану, после первого
+ * кадра прячем, чтобы не повторялись. Очень длинное уменьшаем, режем только бесконечные ленты.
  */
 final class LongShot {
 
@@ -31,7 +32,8 @@ final class LongShot {
 
     private static final int MAX_PX = 32000;    // высота готовой картинки
     private static final int MIN_WIDTH = 540;   // уже не уменьшаем — дальше режем
-    private static final long FRAME_DELAY = 450;
+    private static final long SETTLE = 220;      // после отрисовки кадра — дать догрузиться картинкам
+    private static final long FALLBACK = 1200;   // если WebView не сообщил об отрисовке
 
     private static final String HIDE_FIXED = "(function(){var a=[];document.querySelectorAll('body *').forEach(function(e){"
             + "var p=getComputedStyle(e).position;if(p==='fixed'||p==='sticky'){a.push([e,e.style.getPropertyValue('visibility'),"
@@ -54,6 +56,10 @@ final class LongShot {
     private int lastY = -1;
     private int startX;
     private int startY;
+    private final int fromY;
+    private final int toY;
+    private int from;
+    private int token;
     private boolean cropped;
     private boolean cancelled;
     private boolean stopped;
@@ -61,10 +67,18 @@ final class LongShot {
     private boolean finished;
     private boolean scrollbar;
 
+    /** Вся страница. */
     LongShot(Activity act, LevWebView web, Listener listener) {
+        this(act, web, -1, -1, listener);
+    }
+
+    /** Участок страницы от fromY до toY (в пикселях прокрутки); -1 — от начала / до конца. */
+    LongShot(Activity act, LevWebView web, int fromY, int toY, Listener listener) {
         this.act = act;
         this.web = web;
         this.listener = listener;
+        this.fromY = fromY;
+        this.toY = toY;
     }
 
     void cancel() {
@@ -85,7 +99,10 @@ final class LongShot {
         }
         startX = web.getScrollX();
         startY = web.getScrollY();
-        int range = Math.max(web.scrollRange(), h);
+        int full = Math.max(web.scrollRange(), h);
+        from = Math.max(0, Math.min(fromY < 0 ? 0 : fromY, full - 1));
+        int end = toY < 0 ? full : Math.min(full, Math.max(from + 1, toY));
+        int range = end - from;
         float s = Math.min(1f, 1080f / w);
         if (range * s > MAX_PX) s = Math.max((float) MAX_PX / range, (float) MIN_WIDTH / w);
         total = Math.min(range, (int) (MAX_PX / s));
@@ -104,12 +121,35 @@ final class LongShot {
         scrollbar = web.isVerticalScrollBarEnabled();
         web.setVerticalScrollBarEnabled(false);
         web.setHorizontalScrollBarEnabled(false);
-        web.scrollTo(startX, 0);
+        web.scrollTo(startX, from);
         listener.progress(1, frames);
-        ui.postDelayed(this::capture, FRAME_DELAY);
+        waitFrame();
+    }
+
+    /** Ждём, пока WebView нарисует новое место, и ещё чуть-чуть — для картинок. */
+    private void waitFrame() {
+        int my = ++token;
+        Runnable go = () -> {
+            if (my == token) {
+                token++;
+                capture();
+            }
+        };
+        try {
+            web.postVisualStateCallback(my, new android.webkit.WebView.VisualStateCallback() {
+                @Override
+                public void onComplete(long requestId) {
+                    ui.postDelayed(go, SETTLE);
+                }
+            });
+        } catch (Throwable ignored) {
+            // старый WebView — просто подождём
+        }
+        ui.postDelayed(go, FALLBACK);
     }
 
     private void capture() {
+        if (finished) return;
         if (cancelled || !web.isAttachedToWindow()) {
             finish(false);
             return;
@@ -127,10 +167,11 @@ final class LongShot {
             return;
         }
         lastY = sy;
+        int bottom = from + total;
         try {
             canvas.save();
-            canvas.translate(-sx, 0);
-            canvas.clipRect(sx, sy, sx + w, Math.min(sy + h, total));
+            canvas.translate(-sx, -from);
+            canvas.clipRect(sx, Math.max(sy, from), sx + w, Math.min(sy + h, bottom));
             web.draw(canvas);
             canvas.restore();
         } catch (Throwable e) {
@@ -138,21 +179,22 @@ final class LongShot {
             return;
         }
         frame++;
-        captured = Math.min(total, sy + h);
+        captured = Math.min(total, sy + h - from);
         if (frame == 1) web.evaluateJavascript(HIDE_FIXED, null);
         int next = sy + h;
-        if (next >= total) {
+        if (next >= bottom) {
             finish(true);
             return;
         }
         listener.progress(Math.min(frame + 1, frames), frames);
         web.scrollTo(sx, next);
-        ui.postDelayed(this::capture, FRAME_DELAY);
+        waitFrame();
     }
 
     private void finish(boolean ok) {
         if (finished) return;
         finished = true;
+        token++;
         web.evaluateJavascript(SHOW_FIXED, null);
         web.setVerticalScrollBarEnabled(scrollbar);
         web.setHorizontalScrollBarEnabled(scrollbar);
@@ -196,6 +238,23 @@ final class LongShot {
     }
 
     private Uri save(Bitmap b) throws Exception {
+        return save(act, b);
+    }
+
+    /** Снимок того, что сейчас видно на странице. */
+    static Bitmap visible(LevWebView web) {
+        int w = web.getWidth(), h = web.getHeight();
+        if (w == 0 || h == 0) return null;
+        Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(b);
+        c.drawColor(Ui.bg);
+        c.translate(-web.getScrollX(), -web.getScrollY());
+        web.draw(c);
+        return b;
+    }
+
+    /** Сохранить в Галерею → Pictures/<название браузера>. */
+    static Uri save(Activity act, Bitmap b) throws Exception {
         ContentResolver cr = act.getContentResolver();
         ContentValues v = new ContentValues();
         v.put(MediaStore.Images.Media.DISPLAY_NAME,

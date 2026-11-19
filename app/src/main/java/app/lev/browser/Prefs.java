@@ -11,7 +11,13 @@ final class Prefs {
     private static SharedPreferences sp;
 
     static void init(Context c) {
-        if (sp == null) sp = c.getApplicationContext().getSharedPreferences("lev", Context.MODE_PRIVATE);
+        if (sp == null) {
+            sp = c.getApplicationContext().getSharedPreferences("lev", Context.MODE_PRIVATE);
+            // один раз: третья строка на главной становится конвертером валют (можно вернуть поиск)
+            if (!sp.getBoolean("fx_home3", false)) {
+                sp.edit().putString("home3", "currency").putBoolean("fx_home3", true).apply();
+            }
+        }
     }
 
     static SharedPreferences sp() {
@@ -51,7 +57,7 @@ final class Prefs {
     static String engine() { return s("engine", "google"); }
     static String home1() { return s("home1", "google"); }
     static String home2() { return s("home2", "yandex"); }
-    static String home3() { return s("home3", "ddg"); }
+    static String home3() { return s("home3", "currency"); }
     static String customEngine() { return s("custom_engine", ""); }
 
     // Перевод: device = на телефоне, google / yandex = через их сайт

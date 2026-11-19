@@ -159,6 +159,7 @@ public class BrowserActivity extends Activity {
         translator = new PageTranslator(this, asset("js/translate.js"));
 
         buildUi();
+        shots = new Screenshots(this);
         setupEdgeToEdge();
         applyStatusBar();
         root.post(() -> CrashLog.offer(this));
@@ -224,7 +225,7 @@ public class BrowserActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
-        if (shot != null) shot.cancel();
+        if (shots != null) shots.onPause();
         saveTabs();
         CookieManager.getInstance().flush();
         if (Profiles.supported()) {
@@ -910,6 +911,7 @@ public class BrowserActivity extends Activity {
     @SuppressWarnings("deprecation")
     @Override
     public void onBackPressed() {
+        if (shots != null && shots.onBack()) return;
         if (fsView != null) {
             exitFullscreen(true);
             return;
@@ -1776,20 +1778,27 @@ public class BrowserActivity extends Activity {
     }
 
     void pickEngine(String key) {
-        List<SearchEngines.Engine> all = SearchEngines.all();
-        String curId = Prefs.sp().getString(key, key.equals("home2") ? "yandex" : key.equals("home3") ? "ddg" : "google");
-        String[] names = new String[all.size()];
-        int checked = 0;
-        for (int i = 0; i < all.size(); i++) {
-            names[i] = all.get(i).name;
-            if (all.get(i).id.equals(curId)) checked = i;
+        List<SearchEngines.Engine> engines = SearchEngines.all();
+        String curId = Prefs.sp().getString(key, key.equals("home2") ? "yandex" : key.equals("home3") ? HomeView.FX : "google");
+        boolean fx = key.equals("home3");
+        List<String> ids = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+        if (fx) {
+            ids.add(HomeView.FX);
+            labels.add("Конвертер валют");
         }
+        for (SearchEngines.Engine e : engines) {
+            ids.add(e.id);
+            labels.add(e.name);
+        }
+        String[] names = labels.toArray(new String[0]);
+        int checked = Math.max(0, ids.indexOf(curId));
         String title = key.equals("engine") ? "Поиск в адресной строке"
                 : key.equals("home1") ? "Первый поиск на главной"
-                : key.equals("home2") ? "Второй поиск на главной" : "Третий поиск на главной";
+                : key.equals("home2") ? "Второй поиск на главной" : "Третья строка на главной";
         new AlertDialog.Builder(this).setTitle(title)
                 .setSingleChoiceItems(names, checked, (d, w) -> {
-                    Prefs.put(key, all.get(w).id);
+                    Prefs.put(key, ids.get(w));
                     d.dismiss();
                     home.refresh();
                     updateShield();
@@ -1857,7 +1866,7 @@ public class BrowserActivity extends Activity {
         if (site) {
             items.add(new Object[]{R.drawable.ic_translate, translated ? "Показать оригинал" : "Перевести страницу", null,
                     (Runnable) () -> toggleTranslate(Prefs.translateMode())});
-            items.add(new Object[]{R.drawable.ic_screenshot, "Длинный скриншот", null, (Runnable) this::longScreenshot});
+            items.add(new Object[]{R.drawable.ic_screenshot, "Скриншот", null, (Runnable) () -> shots.chooser()});
             items.add(new Object[]{R.drawable.ic_copy, "Выделить и скопировать текст", null, (Runnable) this::pageText});
         }
         items.add(new Object[]{R.drawable.ic_reload, "Обновить браузер", null, (Runnable) () -> Updater.check(this)});
@@ -1899,88 +1908,16 @@ public class BrowserActivity extends Activity {
         });
     }
 
-    // ====================================================== длинный скриншот
+    // ====================================================== скриншоты
 
-    private LongShot shot;
+    private Screenshots shots;
 
-    private void longScreenshot() {
-        Tab t = cur;
-        if (shot != null || t == null || t.isHome() || t.web == null) return;
-        Context c = this;
-        ViewGroup decor = (ViewGroup) getWindow().getDecorView();
-        FrameLayout cover = new FrameLayout(c);
-        cover.setClickable(true); // пока снимаем — страницу не трогаем
-        LinearLayout box = new LinearLayout(c);
-        box.setOrientation(LinearLayout.HORIZONTAL);
-        box.setGravity(Gravity.CENTER_VERTICAL);
-        box.setPadding(Ui.dp(c, 18), Ui.dp(c, 10), Ui.dp(c, 10), Ui.dp(c, 10));
-        box.setBackground(Ui.round(Ui.card, Ui.dp(c, 18)));
-        box.setElevation(Ui.dp(c, 12));
-        TextView msg = Ui.text(c, "Снимаю всю страницу…", 14, Ui.text, false);
-        box.addView(msg, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView stopBtn = pillButton(c, "Стоп", true);
-        box.addView(stopBtn);
-        View gapV = new View(c);
-        box.addView(gapV, new LinearLayout.LayoutParams(Ui.dp(c, 6), 1));
-        TextView cancel = pillButton(c, "Отмена", false);
-        box.addView(cancel);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
-        lp.setMargins(Ui.dp(c, 12), 0, Ui.dp(c, 12), bottom.getHeight() + Ui.dp(c, 12));
-        cover.addView(box, lp);
-        decor.addView(cover, new FrameLayout.LayoutParams(-1, -1));
-
-        shot = new LongShot(this, t.web, new LongShot.Listener() {
-            @Override
-            public void progress(int frame, int frames) {
-                msg.setText(frames > 1 ? "Снимаю… " + frame + " из " + frames + "\n«Стоп» — сохранить, что уже снято"
-                        : "Снимаю страницу…");
-            }
-
-            @Override
-            public void done(Uri uri, String error, boolean cropped) {
-                shot = null;
-                decor.removeView(cover);
-                if (uri != null) {
-                    Haptics.click(holder);
-                    shotSaved(uri, cropped);
-                } else if (error != null) {
-                    Toast.makeText(BrowserActivity.this, error, Toast.LENGTH_LONG).show();
-                }
-            }
-        });
-        cancel.setOnClickListener(v -> {
-            msg.setText("Отменяю…");
-            if (shot != null) shot.cancel();
-        });
-        stopBtn.setOnClickListener(v -> {
-            Haptics.click(v);
-            msg.setText("Сохраняю…");
-            if (shot != null) shot.stop();
-        });
-        shot.start();
+    Tab currentTab() {
+        return cur;
     }
 
-    private void shotSaved(Uri uri, boolean cropped) {
-        String m = "Галерея → Pictures/" + LongShot.folder();
-        if (cropped) m += "\n\nСнята часть страницы.";
-        new AlertDialog.Builder(this)
-                .setTitle("Скриншот сохранён")
-                .setMessage(m)
-                .setPositiveButton("Поделиться", (d, w) -> {
-                    Intent send = new Intent(Intent.ACTION_SEND).setType("image/jpeg")
-                            .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                    startActivity(Intent.createChooser(send, "Поделиться скриншотом"));
-                })
-                .setNeutralButton("Открыть", (d, w) -> {
-                    try {
-                        startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "image/jpeg")
-                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
-                    } catch (Exception e) {
-                        Toast.makeText(this, "Откройте Галерею → Pictures/" + LongShot.folder(), Toast.LENGTH_SHORT).show();
-                    }
-                })
-                .setNegativeButton("Готово", null)
-                .show();
+    int bottomBarHeight() {
+        return bottom != null ? bottom.getHeight() : 0;
     }
 
     /** Быстрый переключатель в меню: реклама и слежка для открытого сайта. */

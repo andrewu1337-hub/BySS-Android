@@ -155,7 +155,8 @@ public class SettingsActivity extends Activity {
         section("Поиск на главной");
         row("Первый поиск", () -> SearchEngines.get(Prefs.home1()).name, () -> pickEngine("home1"));
         row("Второй поиск", () -> SearchEngines.get(Prefs.home2()).name, () -> pickEngine("home2"));
-        row("Третий поиск", () -> SearchEngines.get(Prefs.home3()).name, () -> pickEngine("home3"));
+        row("Третья строка", () -> HomeView.FX.equals(Prefs.home3()) ? "Конвертер валют"
+                : SearchEngines.get(Prefs.home3()).name, () -> pickEngine("home3"));
 
         section("Погода");
         toggle("Погода вверху", "Обновляется раз в 10 минут · данные Open-Meteo", WeatherView.K_ON, true);
@@ -417,15 +418,21 @@ public class SettingsActivity extends Activity {
 
     private void pickEngine(String key) {
         List<SearchEngines.Engine> all = SearchEngines.all();
-        String def = key.equals("home2") ? "yandex" : key.equals("home3") ? "ddg" : "google";
+        String def = key.equals("home2") ? "yandex" : key.equals("home3") ? HomeView.FX : "google";
         String cur = Prefs.sp().getString(key, def);
-        String[] names = new String[all.size()];
-        int checked = 0;
-        for (int i = 0; i < all.size(); i++) {
-            names[i] = all.get(i).name;
-            if (all.get(i).id.equals(cur)) checked = i;
+        java.util.List<String> ids = new java.util.ArrayList<>();
+        java.util.List<String> labels = new java.util.ArrayList<>();
+        if (key.equals("home3")) {
+            ids.add(HomeView.FX);
+            labels.add("Конвертер валют");
         }
-        choose("Поисковая система", names, checked, w -> Prefs.put(key, all.get(w).id));
+        for (SearchEngines.Engine e : all) {
+            ids.add(e.id);
+            labels.add(e.name);
+        }
+        int checked = Math.max(0, ids.indexOf(cur));
+        choose(key.equals("home3") ? "Третья строка на главной" : "Поисковая система",
+                labels.toArray(new String[0]), checked, w -> Prefs.put(key, ids.get(w)));
     }
 
     private void editCustomEngine() {
