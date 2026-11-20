@@ -99,12 +99,16 @@ jobs:
           git push -f origin logs
 
       - name: Подготовить файл
-        run: cp app/build/outputs/apk/debug/app-debug.apk Lev.apk
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk BySS.apk
+          # Копия под старым именем: версии до сборки 25 ищут файл Lev.apk и иначе не обновятся.
+          # Убрать, когда на телефоне будет сборка 26 или новее.
+          cp BySS.apk Lev.apk
 
       - name: Опубликовать для скачивания
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "lev-$GITHUB_RUN_NUMBER" Lev.apk --repo "$GITHUB_REPOSITORY" \
+          gh release create "byss-$GITHUB_RUN_NUMBER" BySS.apk Lev.apk --repo "$GITHUB_REPOSITORY" \
             --title "BySS, сборка $GITHUB_RUN_NUMBER" \
-            --notes "Откройте эту страницу на телефоне, скачайте Lev.apk и установите. Или в браузере ⋮ → Обновить браузер."
+            --notes "Откройте эту страницу на телефоне, скачайте BySS.apk и установите. Или в браузере ⋮ → Обновить браузер."
