@@ -107,7 +107,12 @@ public class BrowserActivity extends Activity {
     private TextView tabsBtn;
 
     private PageTranslator translator;
-    private String pageJs, ytJs;
+    private String pageJs, ytJs, asJs;
+    /** Автоскролл: на какой вкладке идёт, на паузе ли, плашка внизу с кнопками. */
+    private Tab asTab;
+    private boolean asPaused;
+    private LinearLayout asPill;
+    private ImageButton asPlayBtn;
     private View fsView;
     private WebChromeClient.CustomViewCallback fsCallback;
     private ValueCallback<Uri[]> fileCallback;
@@ -155,6 +160,7 @@ public class BrowserActivity extends Activity {
         AdBlocker.start(this);
         pageJs = asset("js/page.js");
         ytJs = asset("js/youtube.js");
+        asJs = asset("js/autoscroll.js");
         translator = new PageTranslator(this, asset("js/translate.js"));
 
         buildUi();
@@ -745,6 +751,7 @@ public class BrowserActivity extends Activity {
 
     void showTab(Tab t) {
         if (cur != null && cur != t) {
+            if (asTab != null && asTab != t) stopAutoscroll();
             captureThumb(cur);
             if (cur.web != null && cur != mediaTab) cur.web.onPause();
             if (address.hasFocus()) hideKeyboard();
@@ -832,6 +839,7 @@ public class BrowserActivity extends Activity {
         for (Tab o : tabs) if (java.util.Objects.equals(o.space, t.space)) same.add(o);
         int idx = same.indexOf(t);
         if (t == mediaTab) stopMedia();
+        if (t == asTab) stopAutoscroll();
         translator.forget(t);
         destroyWeb(t);
         deleteThumb(t);
@@ -1063,6 +1071,7 @@ public class BrowserActivity extends Activity {
             t.state = null;
         }
         if (t == mediaTab) stopMedia();
+        if (t == asTab) stopAutoscroll();
         translator.forget(t);
         t.translated = false;
         destroyWeb(t);
@@ -1150,6 +1159,7 @@ public class BrowserActivity extends Activity {
             t.url = url;
             t.pageHost = host(url);
             t.translated = false;
+            if (t == asTab) stopAutoscroll(); // новая страница — автоскролл заново только по команде
             if (t == mediaTab && !Profiles.isYouTube(t.pageHost)) stopMedia();
             if (t == cur) {
                 if (old != null && !AdBlocker.baseDomain(old).equals(AdBlocker.baseDomain(t.pageHost))) hidePrompt();
@@ -1310,6 +1320,11 @@ public class BrowserActivity extends Activity {
             } catch (Exception e) {
                 return "{}";
             }
+        }
+
+        @JavascriptInterface
+        public void autoscrollEnd() {
+            ui.post(() -> onAutoscrollEnd(t));
         }
 
         @JavascriptInterface
@@ -1863,6 +1878,109 @@ public class BrowserActivity extends Activity {
         }
     }
 
+    // ==================================================================== автоскролл
+
+    private void openAutoscroll() {
+        Autoscroll.show(this, new Autoscroll.Host() {
+            @Override public boolean running() {
+                return asTab != null && asTab == cur;
+            }
+
+            @Override public void toggle() {
+                if (running()) stopAutoscroll();
+                else startAutoscroll();
+            }
+
+            @Override public void changed() {
+                if (asTab != null && !asPaused && asTab.web != null) {
+                    asTab.web.evaluateJavascript(Autoscroll.startJs(asJs), null);
+                }
+            }
+        });
+    }
+
+    private void startAutoscroll() {
+        if (cur == null || cur.isHome() || cur.web == null) return;
+        if (asTab != null && asTab != cur) stopAutoscroll();
+        asTab = cur;
+        asPaused = false;
+        cur.web.evaluateJavascript(Autoscroll.startJs(asJs), null);
+        showAsPill();
+    }
+
+    private void stopAutoscroll() {
+        if (asTab != null && asTab.web != null) asTab.web.evaluateJavascript(Autoscroll.STOP_JS, null);
+        asTab = null;
+        asPaused = false;
+        hideAsPill();
+    }
+
+    private void toggleAutoscrollPause() {
+        if (asTab == null || asTab.web == null) return;
+        asPaused = !asPaused;
+        asTab.web.evaluateJavascript(asPaused ? Autoscroll.STOP_JS : Autoscroll.startJs(asJs), null);
+        if (asPlayBtn != null) asPlayBtn.setImageResource(asPaused ? R.drawable.ic_n_play : R.drawable.ic_n_pause);
+    }
+
+    private void onAutoscrollEnd(Tab t) {
+        if (t != asTab) return;
+        asTab = null;
+        asPaused = false;
+        hideAsPill();
+        Toast.makeText(this, "Автоскролл остановлен — конец страницы", Toast.LENGTH_SHORT).show();
+    }
+
+    /** Плашка над нижней панелью: пауза · «Автоскролл» (настройки) · стоп. */
+    private void showAsPill() {
+        Context c = this;
+        if (asPill == null) {
+            asPill = new LinearLayout(c);
+            asPill.setOrientation(LinearLayout.HORIZONTAL);
+            asPill.setGravity(Gravity.CENTER_VERTICAL);
+            asPill.setBackground(Ui.round(Ui.card, Ui.dp(c, 22)));
+            asPill.setElevation(Ui.dp(c, 8));
+            asPill.setPadding(Ui.dp(c, 4), 0, Ui.dp(c, 4), 0);
+            asPlayBtn = Ui.iconButton(c, R.drawable.ic_n_pause);
+            asPlayBtn.setContentDescription("Пауза");
+            asPlayBtn.setOnClickListener(v -> {
+                Haptics.click(v);
+                toggleAutoscrollPause();
+            });
+            asPill.addView(asPlayBtn, new LinearLayout.LayoutParams(Ui.dp(c, 40), Ui.dp(c, 40)));
+            TextView lbl = Ui.text(c, "Автоскролл", 14, Ui.text, false);
+            lbl.setPadding(Ui.dp(c, 4), 0, Ui.dp(c, 8), 0);
+            lbl.setOnClickListener(v -> {
+                Haptics.click(v);
+                openAutoscroll();
+            });
+            asPill.addView(lbl, new LinearLayout.LayoutParams(-2, Ui.dp(c, 40)));
+            ImageButton close = Ui.iconButton(c, R.drawable.ic_close);
+            close.setContentDescription("Остановить автоскролл");
+            close.setOnClickListener(v -> {
+                Haptics.click(v);
+                stopAutoscroll();
+            });
+            asPill.addView(close, new LinearLayout.LayoutParams(Ui.dp(c, 40), Ui.dp(c, 40)));
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-2, Ui.dp(c, 44), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+            int at = root.indexOfChild(overlay);
+            if (at < 0) root.addView(asPill, lp);
+            else root.addView(asPill, at, lp); // под меню, чтобы меню открывалось поверх
+        }
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) asPill.getLayoutParams();
+        lp.bottomMargin = bottom.getHeight() + Ui.dp(c, 12);
+        asPill.setLayoutParams(lp);
+        asPlayBtn.setImageResource(R.drawable.ic_n_pause);
+        asPill.animate().cancel();
+        asPill.setVisibility(View.VISIBLE);
+        asPill.setAlpha(0f);
+        asPill.animate().alpha(1f).setDuration(Ui.anim(160)).start();
+    }
+
+    private void hideAsPill() {
+        if (asPill == null || asPill.getVisibility() != View.VISIBLE) return;
+        asPill.animate().alpha(0f).setDuration(Ui.anim(140)).withEndAction(() -> asPill.setVisibility(View.GONE)).start();
+    }
+
     // ==================================================================== меню
 
     private void openMenu() {
@@ -1898,6 +2016,8 @@ public class BrowserActivity extends Activity {
             items.add(new Object[]{R.drawable.ic_translate, translated ? "Показать оригинал" : "Перевести страницу", null,
                     (Runnable) () -> toggleTranslate(Prefs.translateMode())});
             items.add(new Object[]{R.drawable.ic_screenshot, "Скриншот", null, (Runnable) () -> shots.chooser()});
+            items.add(new Object[]{R.drawable.ic_autoscroll, "Автоскролл",
+                    asTab == cur ? (asPaused ? "пауза" : "идёт") : null, (Runnable) this::openAutoscroll});
             items.add(new Object[]{R.drawable.ic_copy, "Выделить и скопировать текст", null, (Runnable) this::pageText});
         }
         items.add(new Object[]{R.drawable.ic_reload, "Обновить браузер", null, (Runnable) () -> Updater.check(this)});
