@@ -47,7 +47,7 @@ final class Screenshots {
         return (ViewGroup) act.getWindow().getDecorView();
     }
 
-    private LevWebView web() {
+    private ByssWebView web() {
         Tab t = act.currentTab();
         return t == null || t.isHome() ? null : t.web;
     }
@@ -148,7 +148,7 @@ final class Screenshots {
     // ================================================================= экран
 
     void visible() {
-        LevWebView w = web();
+        ByssWebView w = web();
         if (w == null || shot != null) return;
         Bitmap b;
         try {
@@ -207,7 +207,7 @@ final class Screenshots {
 
     /** from/to — пиксели прокрутки; -1 — вся страница. */
     private void longShot(int from, int to) {
-        LevWebView w = web();
+        ByssWebView w = web();
         if (w == null || shot != null) return;
         Context c = act;
         FrameLayout cover = new FrameLayout(c);
@@ -359,7 +359,7 @@ final class Screenshots {
     private int areaTop;
 
     void area() {
-        LevWebView w = web();
+        ByssWebView w = web();
         if (w == null || shot != null || area != null) return;
         Context c = act;
         areaTop = w.getScrollY();
@@ -434,7 +434,7 @@ final class Screenshots {
     private void closeArea() {
         View a = area;
         area = null;
-        LevWebView w = web();
+        ByssWebView w = web();
         if (areaScroll != null && w != null) {
             try {
                 w.getViewTreeObserver().removeOnScrollChangedListener(areaScroll);

@@ -3,7 +3,7 @@
    и подставляет перевод. Следит за новым текстом (подгрузка при прокрутке).
    Работает даже на сайтах, которые запрещают перевод. */
 (function () {
-  if (window.__levTr) return 'ready';
+  if (window.__byssTr) return 'ready';
 
   var SKIP = {SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, CODE: 1, PRE: 1, TEXTAREA: 1, INPUT: 1, SELECT: 1,
     OPTION: 1, SVG: 1, MATH: 1, CANVAS: 1, KBD: 1, SAMP: 1, VAR: 1, TEMPLATE: 1, IFRAME: 1, OBJECT: 1};
@@ -42,9 +42,9 @@
     while ((n = walker.nextNode())) {
       var v = n.nodeValue;
       if (!v || v.length < 2 || !LETTER.test(v)) continue;
-      if (n.__levTx !== undefined && n.nodeValue === n.__levTx) continue;  // уже переведено
-      if (n.__levTx !== undefined) { n.__levOrig = n.nodeValue; }           // сайт поменял текст
-      if (n.__levBusy) continue;
+      if (n.__byssTx !== undefined && n.nodeValue === n.__byssTx) continue;  // уже переведено
+      if (n.__byssTx !== undefined) { n.__byssOrig = n.nodeValue; }           // сайт поменял текст
+      if (n.__byssBusy) continue;
       if (!n.parentElement || skipped(n.parentElement)) continue;
       var b = blockOf(n);
       if (!b) continue;
@@ -73,11 +73,11 @@
       if (!items.length) return;
       var id = ++seq;
       jobs[id] = batch;
-      try { window.LevNative.trBatch(id, JSON.stringify(items)); } catch (e) { /* ignore */ }
+      try { window.ByssNative.trBatch(id, JSON.stringify(items)); } catch (e) { /* ignore */ }
       batch = []; items = []; chars = 0;
     }
     groups.forEach(function (g) {
-      g.nodes.forEach(function (n) { n.__levBusy = true; });
+      g.nodes.forEach(function (n) { n.__byssBusy = true; });
       var whole = !g.inter && g.nodes.length > 1;
       if (whole) {
         var t = g.nodes.map(function (n) { return n.nodeValue; }).join('');
@@ -100,10 +100,10 @@
   }
 
   function setNode(n, value) {
-    if (n.__levOrig === undefined) n.__levOrig = n.nodeValue;
-    n.__levTx = value;
+    if (n.__byssOrig === undefined) n.__byssOrig = n.nodeValue;
+    n.__byssTx = value;
     n.nodeValue = value;
-    n.__levBusy = false;
+    n.__byssBusy = false;
     done.push(n);
   }
 
@@ -114,20 +114,20 @@
     for (var i = 0; i < batch.length; i++) {
       var b = batch[i], r = results[i], nodes = b.g.nodes;
       if (r === null || r === undefined) {
-        nodes.forEach(function (n) { n.__levBusy = false; });
+        nodes.forEach(function (n) { n.__byssBusy = false; });
         continue;
       }
       if (b.whole) {
         var first = true;
         nodes.forEach(function (n) {
-          var orig = n.__levOrig !== undefined ? n.__levOrig : n.nodeValue;
+          var orig = n.__byssOrig !== undefined ? n.__byssOrig : n.nodeValue;
           if (first) { setNode(n, keepSpace(orig, r)); first = false; } else { setNode(n, orig.match(/^\s*/)[0] ? ' ' : ''); }
         });
       } else {
         nodes.forEach(function (n, k) {
-          var orig = n.__levOrig !== undefined ? n.__levOrig : n.nodeValue;
+          var orig = n.__byssOrig !== undefined ? n.__byssOrig : n.nodeValue;
           var t = r[k];
-          if (t === null || t === undefined || t === '') { n.__levBusy = false; return; }
+          if (t === null || t === undefined || t === '') { n.__byssBusy = false; return; }
           setNode(n, keepSpace(orig, t));
         });
       }
@@ -138,7 +138,7 @@
     var batch = jobs[id];
     delete jobs[id];
     if (!batch) return;
-    batch.forEach(function (b) { b.g.nodes.forEach(function (n) { n.__levBusy = false; }); });
+    batch.forEach(function (b) { b.g.nodes.forEach(function (n) { n.__byssBusy = false; }); });
   }
 
   function watch() {
@@ -151,7 +151,7 @@
     observer.observe(document.body, {childList: true, subtree: true, characterData: true});
   }
 
-  window.__levTr = {
+  window.__byssTr = {
     sample: function () {
       var text = (document.body && document.body.innerText || '').slice(0, 2000);
       return JSON.stringify({lang: document.documentElement.lang || '', text: text});
@@ -170,8 +170,8 @@
       on = false;
       if (observer) { observer.disconnect(); observer = null; }
       done.forEach(function (n) {
-        if (n.__levOrig !== undefined && n.nodeValue === n.__levTx) n.nodeValue = n.__levOrig;
-        delete n.__levOrig; delete n.__levTx; n.__levBusy = false;
+        if (n.__byssOrig !== undefined && n.nodeValue === n.__byssTx) n.nodeValue = n.__byssOrig;
+        delete n.__byssOrig; delete n.__byssTx; n.__byssBusy = false;
       });
       done = [];
       jobs = {};

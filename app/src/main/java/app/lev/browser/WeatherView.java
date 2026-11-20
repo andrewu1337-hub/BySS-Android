@@ -193,7 +193,7 @@ final class WeatherView extends LinearLayout {
         HttpURLConnection h = (HttpURLConnection) new URL(url).openConnection();
         h.setConnectTimeout(8000);
         h.setReadTimeout(10000);
-        h.setRequestProperty("User-Agent", "Lev-Browser");
+        h.setRequestProperty("User-Agent", "BySS-Browser");
         try (InputStream in = h.getInputStream()) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             byte[] buf = new byte[8192];

@@ -3,18 +3,18 @@
    2) сообщает браузеру, что играет видео/музыка — для плеера в шторке;
    3) выполняет команды плеера: пауза, следующее, предыдущее. */
 (function () {
-  if (window.__levInit) return;
-  window.__levInit = true;
-  var N = window.LevNative;
+  if (window.__byssInit) return;
+  window.__byssInit = true;
+  var N = window.ByssNative;
   if (!N) return;
 
   try {
     var css = N.css(location.hostname);
     if (css) {
       var addCss = function () {
-        if (document.getElementById('__lev_css')) return;
+        if (document.getElementById('__byss_css')) return;
         var st = document.createElement('style');
-        st.id = '__lev_css';
+        st.id = '__byss_css';
         st.textContent = css;
         (document.head || document.documentElement).appendChild(st);
       };
@@ -68,7 +68,7 @@
     if (v && !v.paused && isReal(v)) report(true);
   }, 2000);
 
-  window.__levMedia = function (cmd) {
+  window.__byssMedia = function (cmd) {
     var v = active();
     if (cmd === 'play' && v) { v.play(); return; }
     if (cmd === 'pause' && v) { v.pause(); return; }

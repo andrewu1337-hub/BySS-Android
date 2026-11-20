@@ -23,12 +23,15 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.SystemClock;
 import android.text.InputType;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.StyleSpan;
 import android.view.Gravity;
+import android.view.InputDevice;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
@@ -152,7 +155,7 @@ public class BrowserActivity extends Activity {
         CrashLog.install(this);
         boolean dark = Prefs.dark();
         builtDark = dark;
-        setTheme(dark ? R.style.Theme_Lev_Dark : R.style.Theme_Lev_Light);
+        setTheme(dark ? R.style.Theme_BySS_Dark : R.style.Theme_BySS_Light);
         Ui.apply(dark);
         super.onCreate(state);
         instance = new WeakReference<>(this);
@@ -928,7 +931,7 @@ public class BrowserActivity extends Activity {
 
     private void destroyWeb(Tab t) {
         if (t.web == null) return;
-        LevWebView w = t.web;
+        ByssWebView w = t.web;
         t.web = null;
         detach(w);
         w.setKeepAlive(false);
@@ -1001,7 +1004,7 @@ public class BrowserActivity extends Activity {
     // ================================================================ WebView
 
     private void createWeb(Tab t, String profile) {
-        LevWebView w = new LevWebView(this);
+        ByssWebView w = new ByssWebView(this);
         if (!Profiles.supported()) profile = null;
         Profiles.attach(w, profile);
         t.profile = profile;
@@ -1040,7 +1043,7 @@ public class BrowserActivity extends Activity {
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(w, Prefs.thirdPartyCookies());
 
-        w.addJavascriptInterface(new Native(t), "LevNative");
+        w.addJavascriptInterface(new Native(t), "ByssNative");
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(w, pageJs, Collections.singleton("*"));
             WebViewCompat.addDocumentStartJavaScript(w, ytJs, YT_ORIGINS);
@@ -1892,9 +1895,7 @@ public class BrowserActivity extends Activity {
             }
 
             @Override public void changed() {
-                if (asTab != null && !asPaused && asTab.web != null) {
-                    asTab.web.evaluateJavascript(Autoscroll.startJs(asJs), null);
-                }
+                if (asTab != null && !asPaused) runAutoscroll();
             }
         });
     }
@@ -1904,11 +1905,59 @@ public class BrowserActivity extends Activity {
         if (asTab != null && asTab != cur) stopAutoscroll();
         asTab = cur;
         asPaused = false;
-        cur.web.evaluateJavascript(Autoscroll.startJs(asJs), null);
+        runAutoscroll();
         showAsPill();
     }
 
+    /** Запустить (или перезапустить с новыми настройками): страница сама или свайпы по таймеру. */
+    private void runAutoscroll() {
+        ui.removeCallbacks(asSwipeTick);
+        if (asTab == null || asTab.web == null) return;
+        if (Autoscroll.swipeMode()) {
+            asTab.web.evaluateJavascript(Autoscroll.STOP_JS, null);
+            ui.postDelayed(asSwipeTick, Autoscroll.interval() * 1000L);
+        } else {
+            asTab.web.evaluateJavascript(Autoscroll.startJs(asJs), null);
+        }
+    }
+
+    /** Свайп вверх через интервал — для лент, которые листаются только пальцем (TikTok, Shorts). */
+    private final Runnable asSwipeTick = new Runnable() {
+        @Override public void run() {
+            if (asTab == null || asPaused || !Autoscroll.swipeMode()) return;
+            if (asTab == cur && asTab.web != null && !menuOpen) swipeUp(asTab.web);
+            ui.postDelayed(this, Autoscroll.interval() * 1000L);
+        }
+    };
+
+    private void swipeUp(WebView w) {
+        int h = w.getHeight();
+        int wd = w.getWidth();
+        if (h <= 0 || wd <= 0) return;
+        final long t0 = SystemClock.uptimeMillis();
+        final float x = wd / 2f;
+        final float y0 = h * 0.72f;
+        final float y1 = h * 0.28f;
+        final int steps = 10;
+        final long dur = 220;
+        MotionEvent down = MotionEvent.obtain(t0, t0, MotionEvent.ACTION_DOWN, x, y0, 0);
+        down.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        w.dispatchTouchEvent(down);
+        down.recycle();
+        for (int i = 1; i <= steps; i++) {
+            final int k = i;
+            ui.postDelayed(() -> {
+                MotionEvent e = MotionEvent.obtain(t0, SystemClock.uptimeMillis(),
+                        k == steps ? MotionEvent.ACTION_UP : MotionEvent.ACTION_MOVE, x, y0 + (y1 - y0) * k / steps, 0);
+                e.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+                w.dispatchTouchEvent(e);
+                e.recycle();
+            }, dur * k / steps);
+        }
+    }
+
     private void stopAutoscroll() {
+        ui.removeCallbacks(asSwipeTick);
         if (asTab != null && asTab.web != null) asTab.web.evaluateJavascript(Autoscroll.STOP_JS, null);
         asTab = null;
         asPaused = false;
@@ -1918,7 +1967,12 @@ public class BrowserActivity extends Activity {
     private void toggleAutoscrollPause() {
         if (asTab == null || asTab.web == null) return;
         asPaused = !asPaused;
-        asTab.web.evaluateJavascript(asPaused ? Autoscroll.STOP_JS : Autoscroll.startJs(asJs), null);
+        if (asPaused) {
+            ui.removeCallbacks(asSwipeTick);
+            asTab.web.evaluateJavascript(Autoscroll.STOP_JS, null);
+        } else {
+            runAutoscroll();
+        }
         if (asPlayBtn != null) asPlayBtn.setImageResource(asPaused ? R.drawable.ic_n_play : R.drawable.ic_n_pause);
     }
 
@@ -2401,7 +2455,7 @@ public class BrowserActivity extends Activity {
     }
 
     private void wipe() {
-        LevWebView any = null;
+        ByssWebView any = null;
         for (Tab t : tabs) if (t.web != null && !t.ytProfile && t.space == null) any = t.web;
         if (any != null) {
             any.clearCache(true);
@@ -2602,7 +2656,7 @@ public class BrowserActivity extends Activity {
             Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE);
             List<android.content.pm.ResolveInfo> apps = pm.queryIntentActivities(i, PackageManager.MATCH_ALL);
             if (apps.isEmpty()) return null;
-            Intent probe = new Intent(Intent.ACTION_VIEW, Uri.parse("https://lev-probe.invalid/x"))
+            Intent probe = new Intent(Intent.ACTION_VIEW, Uri.parse("https://byss-probe.invalid/x"))
                     .addCategory(Intent.CATEGORY_BROWSABLE);
             java.util.Set<String> browsers = new java.util.HashSet<>();
             for (android.content.pm.ResolveInfo r : pm.queryIntentActivities(probe, PackageManager.MATCH_ALL)) {
@@ -2862,7 +2916,7 @@ public class BrowserActivity extends Activity {
         t.mediaPlaying = playing;
         if (playing) {
             if (mediaTab != null && mediaTab != t && mediaTab.web != null) {
-                mediaTab.web.evaluateJavascript("window.__levMedia&&__levMedia('pause')", null);
+                mediaTab.web.evaluateJavascript("window.__byssMedia&&__byssMedia('pause')", null);
                 mediaTab.web.setKeepAlive(false);
                 mediaTab.mediaPlaying = false;
             }
@@ -2913,7 +2967,7 @@ public class BrowserActivity extends Activity {
         a.ui.post(() -> {
             Tab t = a.mediaTab;
             if (t == null || t.web == null) return;
-            t.web.evaluateJavascript("window.__levMedia&&__levMedia('" + cmd.replaceAll("[^a-z]", "") + "')", null);
+            t.web.evaluateJavascript("window.__byssMedia&&__byssMedia('" + cmd.replaceAll("[^a-z]", "") + "')", null);
         });
     }
 

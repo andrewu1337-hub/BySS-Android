@@ -38,8 +38,8 @@ import java.util.Locale;
  */
 final class Updater {
 
-    private static final String API = "https://api.github.com/repos/andrewu1337-hub/Lev/releases/latest";
-    private static final String APK = "https://github.com/andrewu1337-hub/Lev/releases/latest/download/Lev.apk";
+    private static final String API = "https://api.github.com/repos/andrewu1337-hub/BySS-Android/releases/latest";
+    private static final String APK = "https://github.com/andrewu1337-hub/BySS-Android/releases/latest/download/BySS.apk";
     private static final String NL = System.lineSeparator();
 
     private Updater() {
@@ -212,7 +212,7 @@ final class Updater {
                 if (assets != null) {
                     for (int i = 0; i < assets.length(); i++) {
                         JSONObject o = assets.optJSONObject(i);
-                        if (o != null && "Lev.apk".equals(o.optString("name"))) url = o.optString("browser_download_url", APK);
+                        if (o != null && "BySS.apk".equals(o.optString("name"))) url = o.optString("browser_download_url", APK);
                     }
                 }
             } catch (java.net.UnknownHostException e) {
@@ -289,7 +289,7 @@ final class Updater {
             h.setConnectTimeout(15000);
             h.setReadTimeout(20000);
             h.setInstanceFollowRedirects(true);
-            h.setRequestProperty("User-Agent", "Lev-Browser");
+            h.setRequestProperty("User-Agent", "BySS-Browser");
             int code = h.getResponseCode();
             if (code != 200) {
                 fail("Обновление не скачалось", "GitHub ответил ошибкой " + code + ". Попробуйте чуть позже.", url, build);
@@ -433,7 +433,7 @@ final class Updater {
             case PackageInstaller.STATUS_FAILURE_CONFLICT:
             case PackageInstaller.STATUS_FAILURE_INCOMPATIBLE:
                 why = "Android не принял обновление поверх текущей версии (подпись не совпадает). "
-                        + "Скачайте Lev.apk со страницы проекта и установите заново.";
+                        + "Скачайте BySS.apk со страницы проекта и установите заново.";
                 break;
             case PackageInstaller.STATUS_FAILURE_BLOCKED:
                 why = "Установку заблокировал телефон. Проверьте разрешение «Установка из этого источника».";
@@ -479,7 +479,7 @@ final class Updater {
         HttpURLConnection h = (HttpURLConnection) new URL(url).openConnection();
         h.setConnectTimeout(8000);
         h.setReadTimeout(10000);
-        h.setRequestProperty("User-Agent", "Lev-Browser");
+        h.setRequestProperty("User-Agent", "BySS-Browser");
         h.setRequestProperty("Accept", "application/vnd.github+json");
         try (InputStream in = h.getInputStream()) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();

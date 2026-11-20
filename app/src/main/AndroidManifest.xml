@@ -21,7 +21,7 @@
         android:label="@string/app_name"
         android:largeHeap="true"
         android:roundIcon="@mipmap/ic_launcher"
-        android:theme="@style/Theme.Lev.Dark">
+        android:theme="@style/Theme.BySS.Dark">
 
         <activity
             android:name=".BrowserActivity"

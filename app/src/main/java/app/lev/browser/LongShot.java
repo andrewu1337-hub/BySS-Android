@@ -38,13 +38,13 @@ final class LongShot {
     private static final String HIDE_FIXED = "(function(){var a=[];document.querySelectorAll('body *').forEach(function(e){"
             + "var p=getComputedStyle(e).position;if(p==='fixed'||p==='sticky'){a.push([e,e.style.getPropertyValue('visibility'),"
             + "e.style.getPropertyPriority('visibility')]);e.style.setProperty('visibility','hidden','important');}});"
-            + "window.__levShot=a;return a.length})()";
-    private static final String SHOW_FIXED = "(function(){(window.__levShot||[]).forEach(function(p){"
+            + "window.__byssShot=a;return a.length})()";
+    private static final String SHOW_FIXED = "(function(){(window.__byssShot||[]).forEach(function(p){"
             + "if(p[1])p[0].style.setProperty('visibility',p[1],p[2]);else p[0].style.removeProperty('visibility');});"
-            + "window.__levShot=null})()";
+            + "window.__byssShot=null})()";
 
     private final Activity act;
-    private final LevWebView web;
+    private final ByssWebView web;
     private final Listener listener;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
@@ -68,12 +68,12 @@ final class LongShot {
     private boolean scrollbar;
 
     /** Вся страница. */
-    LongShot(Activity act, LevWebView web, Listener listener) {
+    LongShot(Activity act, ByssWebView web, Listener listener) {
         this(act, web, -1, -1, listener);
     }
 
     /** Участок страницы от fromY до toY (в пикселях прокрутки); -1 — от начала / до конца. */
-    LongShot(Activity act, LevWebView web, int fromY, int toY, Listener listener) {
+    LongShot(Activity act, ByssWebView web, int fromY, int toY, Listener listener) {
         this.act = act;
         this.web = web;
         this.listener = listener;
@@ -242,7 +242,7 @@ final class LongShot {
     }
 
     /** Снимок того, что сейчас видно на странице. */
-    static Bitmap visible(LevWebView web) {
+    static Bitmap visible(ByssWebView web) {
         int w = web.getWidth(), h = web.getHeight();
         if (w == 0 || h == 0) return null;
         Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);

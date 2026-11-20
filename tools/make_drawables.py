@@ -1,4 +1,4 @@
-"""Generates vector drawables for the Lev browser (icons, wallpapers, launcher icon)
+"""Generates vector drawables for the BySS browser (icons, wallpapers, launcher icon)
 plus SVG previews of everything so the art can be checked visually."""
 import json
 import os

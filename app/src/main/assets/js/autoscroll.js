@@ -2,7 +2,7 @@
 // Плавно (пикселей в секунду) или шагами (часть экрана через интервал). Касание — пауза.
 // Дошли до конца и новое не подгрузилось — останавливаемся и сообщаем браузеру.
 (function () {
-  if (window.__levAS) return;
+  if (window.__byssAS) return;
   function makeAutoscroll(onEnd) {
     let cfg = { mode: 'smooth', speed: 60, interval: 5, step: 75 };
     let on = false;
@@ -153,9 +153,9 @@
     };
   }
 
-  window.__levAS = makeAutoscroll(function () {
+  window.__byssAS = makeAutoscroll(function () {
     try {
-      LevNative.autoscrollEnd();
+      ByssNative.autoscrollEnd();
     } catch (e) {
       // ignore
     }

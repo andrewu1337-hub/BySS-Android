@@ -15,7 +15,7 @@ class PullRefresh extends SwipeRefreshLayout {
 
     interface Source {
         /** Текущая страница или null (главная, нет вкладки). */
-        LevWebView web();
+        ByssWebView web();
     }
 
     private final Source source;
@@ -32,7 +32,7 @@ class PullRefresh extends SwipeRefreshLayout {
         int a = ev.getActionMasked();
         if (a == MotionEvent.ACTION_DOWN) {
             multi = false;
-            LevWebView w = source.web();
+            ByssWebView w = source.web();
             if (w != null) w.resetPull();
             inDown = true;
             try {
@@ -63,7 +63,7 @@ class PullRefresh extends SwipeRefreshLayout {
     boolean holdGesture() {
         if (inDown) return false;
         if (multi) return true;
-        LevWebView w = source.web();
+        ByssWebView w = source.web();
         return w == null || !w.pulledAtTop();
     }
 }

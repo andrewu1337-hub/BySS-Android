@@ -8,11 +8,11 @@ import android.webkit.WebView;
  * WebView, который умеет «не замечать», что приложение свернули, — пока играет видео.
  * Так YouTube продолжает играть в фоне и при выключенном экране.
  */
-public class LevWebView extends WebView {
+public class ByssWebView extends WebView {
 
     private boolean keepAlive;
 
-    public LevWebView(Context context) {
+    public ByssWebView(Context context) {
         super(context);
     }
 

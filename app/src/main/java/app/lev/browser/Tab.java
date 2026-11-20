@@ -18,7 +18,7 @@ final class Tab {
     String url;
     String title;
     long lastUsed;
-    LevWebView web;
+    ByssWebView web;
     /** Спящая вкладка: сохранённая история «назад» (только в памяти). */
     android.os.Bundle state;
     /** Не используется: картинки вкладок живут в кэше BrowserActivity (экономия памяти). */

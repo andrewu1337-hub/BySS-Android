@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Заставка при запуске (Android 12+): значок приложения на чёрном и плавный переход -->
-    <style name="Theme.Lev.Dark" parent="Base.Lev.Dark">
+    <style name="Theme.BySS.Dark" parent="Base.BySS.Dark">
         <item name="android:windowSplashScreenBackground">@color/dark_bg</item>
         <item name="android:windowSplashScreenIconBackgroundColor">@color/dark_bg</item>
     </style>
-    <style name="Theme.Lev.Light" parent="Base.Lev.Light">
+    <style name="Theme.BySS.Light" parent="Base.BySS.Light">
         <item name="android:windowSplashScreenBackground">@color/light_bg</item>
     </style>
 </resources>

@@ -56,7 +56,7 @@ public class SettingsActivity extends Activity {
         Prefs.init(this);
         SitePrefs.init(this);
         boolean dark = Prefs.dark();
-        setTheme(dark ? R.style.Theme_Lev_Dark : R.style.Theme_Lev_Light);
+        setTheme(dark ? R.style.Theme_BySS_Dark : R.style.Theme_BySS_Light);
         Ui.apply(dark);
         super.onCreate(state);
         page = getIntent().getStringExtra("page");

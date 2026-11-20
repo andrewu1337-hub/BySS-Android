@@ -12,8 +12,10 @@ import android.widget.TextView;
 
 /**
  * Автоскролл страницы: настройки и окно с ними (меню → «Автоскролл»).
- * Плавно — скорость 1…10, шагами — интервал в секундах и шаг в процентах экрана.
- * Сама прокрутка — js/autoscroll.js в странице, тот же код, что в BySS для ПК.
+ * Плавно — скорость 1…10, шагами — интервал в секундах и шаг в процентах экрана:
+ * это делает js/autoscroll.js в странице, тот же код, что в BySS для ПК.
+ * Свайпом — браузер сам проводит «пальцем» вверх через интервал: так листаются
+ * ленты вроде TikTok, которые обычную прокрутку не принимают.
  */
 final class Autoscroll {
 
@@ -24,10 +26,19 @@ final class Autoscroll {
     static final int[] INTERVALS = {1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 45, 60};
     static final int[] STEPS = {10, 25, 50, 75, 90, 100};
 
-    static final String STOP_JS = "window.__levAS&&__levAS.stop()";
+    static final String STOP_JS = "window.__byssAS&&__byssAS.stop()";
+
+    static String mode() {
+        String m = Prefs.sp().getString("as_mode", "smooth");
+        return "step".equals(m) || "swipe".equals(m) ? m : "smooth";
+    }
 
     static boolean stepMode() {
-        return "step".equals(Prefs.sp().getString("as_mode", "smooth"));
+        return "step".equals(mode());
+    }
+
+    static boolean swipeMode() {
+        return "swipe".equals(mode());
     }
 
     static int level() {
@@ -53,11 +64,12 @@ final class Autoscroll {
     static String startJs(String core) {
         String cfg = "{mode:'" + (stepMode() ? "step" : "smooth") + "',speed:" + SPEEDS[level() - 1]
                 + ",interval:" + interval() + ",step:" + step() + "}";
-        return core + "\n;window.__levAS&&__levAS.start(" + cfg + ");";
+        return core + "\n;window.__byssAS&&__byssAS.start(" + cfg + ");";
     }
 
     /** Короткая подпись текущих настроек: «плавно · 4 из 10» / «шагами · 5 с · 75%». */
     static String summary() {
+        if (swipeMode()) return "свайпом · " + interval() + " с";
         return stepMode() ? "шагами · " + interval() + " с · " + step() + "%" : "плавно · " + level() + " из 10";
     }
 
@@ -84,8 +96,10 @@ final class Autoscroll {
         seg.setPadding(Ui.dp(c, 3), Ui.dp(c, 3), Ui.dp(c, 3), Ui.dp(c, 3));
         TextView smooth = segItem(c, "Плавно");
         TextView steps = segItem(c, "Шагами");
+        TextView swipes = segItem(c, "Свайпом");
         seg.addView(smooth, new LinearLayout.LayoutParams(0, Ui.dp(c, 38), 1f));
         seg.addView(steps, new LinearLayout.LayoutParams(0, Ui.dp(c, 38), 1f));
+        seg.addView(swipes, new LinearLayout.LayoutParams(0, Ui.dp(c, 38), 1f));
         root.addView(seg, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout smoothBox = new LinearLayout(c);
@@ -102,42 +116,50 @@ final class Autoscroll {
         SeekBar inter = bar(c, INTERVALS.length - 1, indexOf(INTERVALS, interval()));
         TextView stepLabel = label(c);
         SeekBar stepBar = bar(c, STEPS.length - 1, indexOf(STEPS, step()));
+        LinearLayout stepOnly = new LinearLayout(c);
+        stepOnly.setOrientation(LinearLayout.VERTICAL);
         stepBox.addView(intLabel);
         stepBox.addView(inter);
-        stepBox.addView(stepLabel);
-        stepBox.addView(stepBar);
+        stepOnly.addView(stepLabel);
+        stepOnly.addView(stepBar);
+        stepBox.addView(stepOnly);
         root.addView(stepBox);
 
-        TextView hint = Ui.text(c, "Коснитесь страницы — пауза. Остановить — ✕ на плашке внизу.", 12.5f, Ui.text2, false);
+        TextView hint = Ui.text(c, "", 12.5f, Ui.text2, false);
         hint.setPadding(0, Ui.dp(c, 12), 0, Ui.dp(c, 4));
         root.addView(hint);
 
         Runnable sync = () -> {
-            boolean st = stepMode();
-            mark(c, smooth, !st);
+            String m = mode();
+            boolean st = "step".equals(m);
+            boolean sw = "swipe".equals(m);
+            mark(c, smooth, !st && !sw);
             mark(c, steps, st);
-            smoothBox.setVisibility(st ? View.GONE : View.VISIBLE);
-            stepBox.setVisibility(st ? View.VISIBLE : View.GONE);
+            mark(c, swipes, sw);
+            smoothBox.setVisibility(st || sw ? View.GONE : View.VISIBLE);
+            stepBox.setVisibility(st || sw ? View.VISIBLE : View.GONE);
+            stepOnly.setVisibility(st ? View.VISIBLE : View.GONE);
+            hint.setText(sw ? "Через интервал браузер листает ленту свайпом вверх — для TikTok, Shorts и похожих. "
+                    + "Остановить — ✕ на плашке внизу."
+                    : "Коснитесь страницы — пауза. Остановить — ✕ на плашке внизу.");
             speedLabel.setText("Скорость:  " + level() + " из 10");
             intLabel.setText("Интервал:  " + interval() + " с");
             stepLabel.setText("Шаг:  " + step() + "% экрана");
         };
         sync.run();
 
-        smooth.setOnClickListener(v -> {
-            if (!stepMode()) return;
-            Haptics.click(v);
-            Prefs.put("as_mode", "smooth");
-            sync.run();
-            host.changed();
-        });
-        steps.setOnClickListener(v -> {
-            if (stepMode()) return;
-            Haptics.click(v);
-            Prefs.put("as_mode", "step");
-            sync.run();
-            host.changed();
-        });
+        String[] ids = {"smooth", "step", "swipe"};
+        TextView[] btns = {smooth, steps, swipes};
+        for (int i = 0; i < btns.length; i++) {
+            String id = ids[i];
+            btns[i].setOnClickListener(v -> {
+                if (id.equals(mode())) return;
+                Haptics.click(v);
+                Prefs.put("as_mode", id);
+                sync.run();
+                host.changed();
+            });
+        }
         listen(speed, i -> Prefs.put("as_level", i + 1), sync, host);
         listen(inter, i -> Prefs.put("as_interval", INTERVALS[i]), sync, host);
         listen(stepBar, i -> Prefs.put("as_step", STEPS[i]), sync, host);

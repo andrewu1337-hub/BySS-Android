@@ -82,7 +82,7 @@ final class PageTranslator {
 
     void restore(Tab tab) {
         if (tab == null || tab.web == null) return;
-        tab.web.evaluateJavascript("window.__levTr&&__levTr.restore()", null);
+        tab.web.evaluateJavascript("window.__byssTr&&__byssTr.restore()", null);
         tab.translated = false;
         synchronized (active) {
             active.remove(tab.id);
@@ -116,7 +116,7 @@ final class PageTranslator {
 
     private void onDevice(Tab tab) {
         tab.web.evaluateJavascript(script, ignored ->
-                tab.web.evaluateJavascript("window.__levTr?__levTr.sample():''", value -> {
+                tab.web.evaluateJavascript("window.__byssTr?__byssTr.sample():''", value -> {
                     String sample = decode(value);
                     exec.execute(() -> prepare(tab, sample));
                 }));
@@ -150,7 +150,7 @@ final class PageTranslator {
         if (tab == null || tab.web == null) return;
         tab.web.evaluateJavascript(script, ignored -> {
             if (tab.web == null) return;
-            tab.web.evaluateJavascript("window.__levTr?__levTr.sample():''", value -> {
+            tab.web.evaluateJavascript("window.__byssTr?__byssTr.sample():''", value -> {
                 String sample = decode(value);
                 exec.execute(() -> {
                     String lang = detectLang(sample);
@@ -188,7 +188,7 @@ final class PageTranslator {
                 tab.translated = true;
                 tab.trTo = to;
                 act.onTranslateState(tab);
-                tab.web.evaluateJavascript("__levTr.start()", null);
+                tab.web.evaluateJavascript("__byssTr.start()", null);
             });
         } catch (Exception e) {
             toast("Перевод не удался: " + e.getMessage());
@@ -218,13 +218,13 @@ final class PageTranslator {
                         out.put(res);
                     }
                 }
-                String js = "window.__levTr&&__levTr.apply(" + id + "," + out + ")";
+                String js = "window.__byssTr&&__byssTr.apply(" + id + "," + out + ")";
                 act.runOnUiThread(() -> {
                     if (tab.web != null) tab.web.evaluateJavascript(js, null);
                 });
             } catch (Exception e) {
                 act.runOnUiThread(() -> {
-                    if (tab.web != null) tab.web.evaluateJavascript("window.__levTr&&__levTr.fail(" + id + ")", null);
+                    if (tab.web != null) tab.web.evaluateJavascript("window.__byssTr&&__byssTr.fail(" + id + ")", null);
                 });
             }
         });

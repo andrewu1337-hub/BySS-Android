@@ -67,7 +67,7 @@ public class MediaService extends Service {
         ch.setShowBadge(false);
         nm.createNotificationChannel(ch);
 
-        session = new MediaSession(this, "Lev");
+        session = new MediaSession(this, "BySS");
         session.setCallback(new MediaSession.Callback() {
             @Override public void onPlay() { BrowserActivity.mediaCommand("play"); }
             @Override public void onPause() { BrowserActivity.mediaCommand("pause"); }
@@ -81,7 +81,7 @@ public class MediaService extends Service {
         session.setActive(true);
 
         PowerManager pm = getSystemService(PowerManager.class);
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Lev:player");
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BySS:player");
         wakeLock.setReferenceCounted(false);
     }
 

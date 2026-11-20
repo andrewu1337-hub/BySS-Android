@@ -2,10 +2,10 @@
    bg  — видео не останавливается, когда браузер свёрнут или экран выключен;
    ads — убирает рекламу из ответов плеера, прячет рекламные блоки, пропускает ролики. */
 (function () {
-  if (window.__levYt) return;
-  window.__levYt = true;
+  if (window.__byssYt) return;
+  window.__byssYt = true;
   var cfg = {};
-  try { cfg = JSON.parse(window.LevNative.cfg()); } catch (e) { cfg = {bg: true, ads: true}; }
+  try { cfg = JSON.parse(window.ByssNative.cfg()); } catch (e) { cfg = {bg: true, ads: true}; }
 
   if (cfg.bg) {
     try {
@@ -73,9 +73,9 @@
     + 'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-ads"]'
     + '{display:none!important;}';
   var addCss = function () {
-    if (document.getElementById('__lev_yt')) return;
+    if (document.getElementById('__byss_yt')) return;
     var st = document.createElement('style');
-    st.id = '__lev_yt';
+    st.id = '__byss_yt';
     st.textContent = css;
     (document.head || document.documentElement).appendChild(st);
   };

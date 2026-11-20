@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Base.Lev.Dark" parent="@android:style/Theme.Material.NoActionBar">
+    <style name="Base.BySS.Dark" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/dark_bg</item>
         <item name="android:colorPrimary">@color/dark_bg</item>
         <item name="android:colorPrimaryDark">@color/dark_bg</item>
@@ -9,17 +9,17 @@
         <item name="android:navigationBarColor">@color/dark_bar</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
-        <item name="android:alertDialogTheme">@style/Lev.Dialog.Dark</item>
-        <item name="android:dialogTheme">@style/Lev.Dialog.Dark</item>
+        <item name="android:alertDialogTheme">@style/BySS.Dialog.Dark</item>
+        <item name="android:dialogTheme">@style/BySS.Dialog.Dark</item>
     </style>
 
-    <style name="Lev.Dialog.Dark" parent="@android:style/Theme.Material.Dialog.Alert">
+    <style name="BySS.Dialog.Dark" parent="@android:style/Theme.Material.Dialog.Alert">
         <item name="android:windowBackground">@drawable/dialog_bg_dark</item>
         <item name="android:colorAccent">#FFFFFFFF</item>
         <item name="android:colorBackground">#FF1C1C1E</item>
     </style>
 
-    <style name="Base.Lev.Light" parent="@android:style/Theme.Material.Light.NoActionBar">
+    <style name="Base.BySS.Light" parent="@android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/light_bg</item>
         <item name="android:colorPrimary">@color/light_bg</item>
         <item name="android:colorPrimaryDark">@color/light_bg</item>
@@ -28,16 +28,16 @@
         <item name="android:navigationBarColor">@color/light_bar</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
-        <item name="android:alertDialogTheme">@style/Lev.Dialog.Light</item>
-        <item name="android:dialogTheme">@style/Lev.Dialog.Light</item>
+        <item name="android:alertDialogTheme">@style/BySS.Dialog.Light</item>
+        <item name="android:dialogTheme">@style/BySS.Dialog.Light</item>
     </style>
 
-    <style name="Lev.Dialog.Light" parent="@android:style/Theme.Material.Light.Dialog.Alert">
+    <style name="BySS.Dialog.Light" parent="@android:style/Theme.Material.Light.Dialog.Alert">
         <item name="android:windowBackground">@drawable/dialog_bg_light</item>
         <item name="android:colorAccent">#FF111113</item>
         <item name="android:colorBackground">#FFFFFFFF</item>
     </style>
 
-    <style name="Theme.Lev.Dark" parent="Base.Lev.Dark" />
-    <style name="Theme.Lev.Light" parent="Base.Lev.Light" />
+    <style name="Theme.BySS.Dark" parent="Base.BySS.Dark" />
+    <style name="Theme.BySS.Light" parent="Base.BySS.Light" />
 </resources>
