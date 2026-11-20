@@ -24,6 +24,24 @@ public class LevWebView extends WebView {
         return keepAlive;
     }
 
+    private boolean pulledAtTop;
+
+    /** Начался новый жест: забываем, упиралась ли страница в верх. */
+    void resetPull() {
+        pulledAtTop = false;
+    }
+
+    /** Страница в этом жесте сама дошла до верха и тянется дальше — можно обновлять. */
+    boolean pulledAtTop() {
+        return pulledAtTop;
+    }
+
+    @Override
+    protected void onOverScrolled(int scrollX, int scrollY, boolean clampedX, boolean clampedY) {
+        super.onOverScrolled(scrollX, scrollY, clampedX, clampedY);
+        if (clampedY && scrollY <= 0) pulledAtTop = true;
+    }
+
     /** Полная высота страницы в пикселях экрана (для длинного скриншота). */
     int scrollRange() {
         return computeVerticalScrollRange();

@@ -56,7 +56,6 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 import androidx.webkit.WebSettingsCompat;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
@@ -92,7 +91,7 @@ public class BrowserActivity extends Activity {
     private Tab mediaTab;
 
     private FrameLayout root;
-    private SwipeRefreshLayout swipe;
+    private PullRefresh swipe;
     private FrameLayout holder;
     private FrameLayout overlay;
     private FrameLayout fsLayer;
@@ -206,11 +205,7 @@ public class BrowserActivity extends Activity {
         skipHomeOnce = false;
         Prefs.put("last_background", 0L);
         if (cur != null && cur.web != null) cur.web.onResume();
-        try {
-            if (cur != null && cur.web != null) cur.web.resumeTimers();
-        } catch (Exception ignored) {
-            // нет WebView
-        }
+        resumeWebTimers();
         for (Tab t : tabs) {
             if (t.web != null) Profiles.cookies(t.profile).setAcceptThirdPartyCookies(t.web, Prefs.thirdPartyCookies());
         }
@@ -245,7 +240,42 @@ public class BrowserActivity extends Activity {
         super.onStop();
         Prefs.put("last_background", System.currentTimeMillis());
         boolean keepMedia = mediaTab != null && mediaTab.mediaPlaying && Prefs.bgPlay();
-        if (!keepMedia && cur != null && cur.web != null) cur.web.pauseTimers();
+        if (!keepMedia) {
+            WebView w = anyWeb();
+            if (w != null) {
+                w.pauseTimers();
+                timersPaused = true;
+            }
+        }
+    }
+
+    /*
+     * pauseTimers/resumeTimers действуют сразу на все страницы приложения.
+     * Раньше таймеры возобновлялись только через текущую вкладку: если после возврата
+     * открывалась главная (у неё нет WebView), они так и оставались на паузе, и любой сайт
+     * «грузился» бесконечно, пока браузер не закроешь. Теперь возобновляем через любую
+     * страницу, а если страниц ещё нет — как только первая появится.
+     */
+    private boolean timersPaused;
+
+    private WebView anyWeb() {
+        if (cur != null && cur.web != null) return cur.web;
+        for (Tab t : tabs) {
+            if (t.web != null) return t.web;
+        }
+        return null;
+    }
+
+    private void resumeWebTimers() {
+        if (!timersPaused) return;
+        WebView w = anyWeb();
+        if (w == null) return;
+        try {
+            w.resumeTimers();
+            timersPaused = false;
+        } catch (Exception ignored) {
+            // нет WebView
+        }
     }
 
     @Override
@@ -305,7 +335,7 @@ public class BrowserActivity extends Activity {
         sbar = new View(c);
         root.addView(sbar, new FrameLayout.LayoutParams(-1, 0, Gravity.TOP));
 
-        swipe = new SwipeRefreshLayout(c);
+        swipe = new PullRefresh(c, () -> cur == null || cur.isHome() ? null : cur.web);
         swipe.setColorSchemeColors(Ui.text);
         swipe.setProgressBackgroundColorSchemeColor(Ui.pill);
         holder = new FrameLayout(c);
@@ -313,7 +343,7 @@ public class BrowserActivity extends Activity {
         swipe.addView(holder, new ViewGroup.LayoutParams(-1, -1));
         swipe.setOnChildScrollUpCallback((parent, child) ->
                 cur == null || cur.isHome() || cur.web == null || cur.web.canScrollVertically(-1)
-                        || cur.web.getScrollY() > 0);
+                        || cur.web.getScrollY() > 0 || swipe.holdGesture());
         swipe.setOnRefreshListener(() -> {
             Haptics.click(swipe);
             if (cur != null && cur.web != null) cur.web.reload();
@@ -739,6 +769,7 @@ public class BrowserActivity extends Activity {
             detach(t.web);
             holder.addView(t.web, new FrameLayout.LayoutParams(-1, -1));
             t.web.onResume();
+            resumeWebTimers();
         }
         hidePrompt();
         Integer known = tabColor.get(t);
