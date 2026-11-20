@@ -223,6 +223,7 @@ public class BrowserActivity extends Activity {
         updateBars();
         Icons.applyTask(this);
         Updater.onResume(this);
+        Updater.autoCheck(this);
         watchDownloads();
     }
 

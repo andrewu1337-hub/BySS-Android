@@ -193,6 +193,42 @@ final class Updater {
 
     // ------------------------------------------------------------ проверка
 
+    /** Последняя сборка на GitHub: {номер, ссылка на файл}. Номер -1 и текст ошибки — если узнать не вышло. */
+    private static Object[] latest() {
+        int latest = -1;
+        String url = APK;
+        String err = null;
+        try {
+            JSONObject j = new JSONObject(get(API));
+            String tag = j.optString("tag_name");
+            latest = Integer.parseInt(tag.substring(tag.lastIndexOf('-') + 1).trim());
+            JSONArray assets = j.optJSONArray("assets");
+            if (assets != null) {
+                for (int i = 0; i < assets.length(); i++) {
+                    JSONObject o = assets.optJSONObject(i);
+                    if (o != null && "BySS.apk".equals(o.optString("name"))) url = o.optString("browser_download_url", APK);
+                }
+            }
+        } catch (java.net.UnknownHostException e) {
+            err = "Нет интернета — проверьте сеть и попробуйте ещё раз.";
+        } catch (java.net.SocketTimeoutException e) {
+            err = "GitHub долго не отвечает — попробуйте чуть позже.";
+        } catch (Exception e) {
+            err = "Не получилось узнать последнюю сборку (" + e.getClass().getSimpleName() + ").";
+        }
+        return new Object[]{latest, url, err};
+    }
+
+    private static void offer(Activity a, int found, int current, String apk) {
+        new AlertDialog.Builder(a)
+                .setTitle("Обновить браузер?")
+                .setMessage("Есть новая сборка " + found + " (у вас — " + current + ")." + NL + NL
+                        + "Точно обновить? Вкладки, настройки и входы на сайтах сохранятся.")
+                .setPositiveButton("Обновить", (d, w) -> start(a, apk, found))
+                .setNegativeButton("Не сейчас", null)
+                .show();
+    }
+
     static void check(Activity a) {
         if (running && dialog != null && dialog.isShowing()) {
             Toast.makeText(a, "Обновление уже идёт", Toast.LENGTH_SHORT).show();
@@ -201,30 +237,10 @@ final class Updater {
         Toast.makeText(a, "Проверяю обновления…", Toast.LENGTH_SHORT).show();
         int current = currentBuild(a);
         new Thread(() -> {
-            int latest = -1;
-            String url = APK;
-            String err = null;
-            try {
-                JSONObject j = new JSONObject(get(API));
-                String tag = j.optString("tag_name");
-                latest = Integer.parseInt(tag.substring(tag.lastIndexOf('-') + 1).trim());
-                JSONArray assets = j.optJSONArray("assets");
-                if (assets != null) {
-                    for (int i = 0; i < assets.length(); i++) {
-                        JSONObject o = assets.optJSONObject(i);
-                        if (o != null && "BySS.apk".equals(o.optString("name"))) url = o.optString("browser_download_url", APK);
-                    }
-                }
-            } catch (java.net.UnknownHostException e) {
-                err = "Нет интернета — проверьте сеть и попробуйте ещё раз.";
-            } catch (java.net.SocketTimeoutException e) {
-                err = "GitHub долго не отвечает — попробуйте чуть позже.";
-            } catch (Exception e) {
-                err = "Не получилось узнать последнюю сборку (" + e.getClass().getSimpleName() + ").";
-            }
-            int found = latest;
-            String apk = url;
-            String error = err;
+            Object[] r = latest();
+            int found = (Integer) r[0];
+            String apk = (String) r[1];
+            String error = (String) r[2];
             a.runOnUiThread(() -> {
                 if (a.isFinishing()) return;
                 if (found < 0) {
@@ -238,16 +254,39 @@ final class Updater {
                             .setPositiveButton("Хорошо", null)
                             .show();
                 } else {
-                    new AlertDialog.Builder(a)
-                            .setTitle("Обновить браузер?")
-                            .setMessage("Есть новая сборка " + found + " (у вас — " + current + ")." + NL + NL
-                                    + "Точно обновить? Вкладки, настройки и входы на сайтах сохранятся.")
-                            .setPositiveButton("Обновить", (d, w) -> start(a, apk, found))
-                            .setNegativeButton("Не сейчас", null)
-                            .show();
+                    offer(a, found, current, apk);
                 }
             });
-        }).start();
+        }, "BySS-update-check").start();
+    }
+
+    private static final long AUTO_EVERY = 6 * 3600 * 1000L;
+    private static volatile boolean autoBusy;
+
+    /** Тихая проверка при открытии браузера, не чаще раза в 6 часов. Есть новая сборка — предложить обновить. */
+    static void autoCheck(Activity a) {
+        long now = System.currentTimeMillis();
+        long last = Prefs.sp().getLong("upd_auto_checked", 0L);
+        if (autoBusy || running || (now - last < AUTO_EVERY && now >= last)) return;
+        autoBusy = true;
+        Prefs.put("upd_auto_checked", now);
+        hook(a);
+        int current = currentBuild(a);
+        new Thread(() -> {
+            try {
+                Object[] r = latest();
+                int found = (Integer) r[0];
+                String apk = (String) r[1];
+                if (found <= current) return; // нет новой сборки или нет сети — молчим
+                ui.post(() -> {
+                    Activity h = host.get();
+                    if (h == null || h.isFinishing() || running || resumed <= 0) return;
+                    offer(h, found, current, apk);
+                });
+            } finally {
+                autoBusy = false;
+            }
+        }, "BySS-update-auto").start();
     }
 
     // ------------------------------------------------------------ скачивание
