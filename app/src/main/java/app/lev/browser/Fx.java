@@ -1,7 +1,12 @@
 package app.lev.browser;
 
+import android.graphics.Typeface;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.StyleSpan;
 
 import org.json.JSONObject;
 
@@ -32,7 +37,7 @@ final class Fx {
     static final String SOURCE_URL = "https://www.exchangerate-api.com";
     private static final String API = "https://open.er-api.com/v6/latest/EUR";
     private static final long FRESH = 6 * 3600_000L;
-    private static final String DEFAULT_LIST = "MDL,USD,RON,UAH,CZK,GBP";
+    private static final String DEFAULT_LIST = "USD,MDL,RON,UAH,CZK,GBP";
     /** Эти валюты — первыми в списке выбора. */
     static final List<String> POPULAR = Arrays.asList("EUR", "USD", "MDL", "RON", "UAH", "RUB", "GBP", "CZK", "PLN",
             "CHF", "TRY", "BGN", "HUF", "BYN", "KZT", "GEL", "AMD", "AZN", "SEK", "NOK", "DKK", "RSD", "ILS", "AED",
@@ -244,19 +249,35 @@ final class Fx {
         return new DecimalFormat(pattern, sy).format(v);
     }
 
-    /** Строка на главной: «1 € = 19,62 MDL · 1,05 $». */
-    static String summary() {
-        if (!ready()) return "Конвертер валют";
+    /** Вторая валюта строки на главной — первая в списке (кроме основной); null — списка нет. */
+    static String homeTarget() {
         String b = base();
+        for (String c : targets()) if (!c.equals(b)) return c;
+        return null;
+    }
+
+    /** Сделать валюту второй на главной: ставим её первой в списке. */
+    static void setHomeTarget(String code) {
         List<String> t = targets();
-        StringBuilder sb = new StringBuilder("1 ").append(b).append(" = ");
-        int n = 0;
-        for (String c : t) {
-            if (c.equals(b)) continue;
-            if (n > 0) sb.append(" · ");
-            sb.append(format(convert(1, b, c))).append(' ').append(c);
-            if (++n == 2) break;
-        }
-        return n == 0 ? "Конвертер валют" : sb.toString();
+        t.remove(code);
+        t.add(0, code);
+        setTargets(t);
+    }
+
+    /** Строка на главной — только две валюты: «1 EUR → 1,05 USD». */
+    static CharSequence summary() {
+        String b = base();
+        String to = homeTarget();
+        if (!ready() || to == null) return "Конвертер валют";
+        SpannableStringBuilder sb = new SpannableStringBuilder();
+        sb.append("1 ").append(b);
+        sb.setSpan(new ForegroundColorSpan(Ui.text2), 0, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        int a = sb.length();
+        sb.append("   →   ");
+        sb.setSpan(new ForegroundColorSpan(Ui.text2), a, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        int v = sb.length();
+        sb.append(format(convert(1, b, to))).append(' ').append(to);
+        sb.setSpan(new StyleSpan(Typeface.BOLD), v, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return sb;
     }
 }

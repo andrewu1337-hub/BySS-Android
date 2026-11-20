@@ -35,7 +35,7 @@ final class FxDialog {
     private final Runnable changed;
     private AlertDialog dialog;
     private EditText amount;
-    private TextView baseBtn, baseName, status;
+    private TextView baseBtn, baseName, homePair, status;
     private LinearLayout list;
     private final List<TextView> values = new ArrayList<>();
     private boolean updatingText;
@@ -83,6 +83,23 @@ final class FxDialog {
         root.addView(top, new LinearLayout.LayoutParams(-1, -2));
         baseName = Ui.text(c, "", 13, Ui.text2, false);
         root.addView(baseName);
+
+        // какая пара видна на главной — и как её сменить
+        homePair = Ui.text(c, "", 14, Ui.text, false);
+        homePair.setPadding(0, Ui.dp(c, 10), 0, Ui.dp(c, 2));
+        homePair.setMinHeight(Ui.dp(c, 40));
+        homePair.setOnClickListener(v -> {
+            Haptics.click(v);
+            pick("Вторая валюта на главной", code -> {
+                if (code.equals(Fx.base())) {
+                    Toast.makeText(c, code + " уже основная", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                Fx.setHomeTarget(code);
+                rebuild();
+            });
+        });
+        root.addView(homePair, new LinearLayout.LayoutParams(-1, -2));
 
         View line = new View(c);
         line.setBackgroundColor(Ui.line);
@@ -191,6 +208,16 @@ final class FxDialog {
         String b = Fx.base();
         baseBtn.setText(Fx.flag(b) + "  " + b + "  ▾");
         baseName.setText(Fx.name(b));
+        String to = Fx.homeTarget();
+        android.text.SpannableStringBuilder hp = new android.text.SpannableStringBuilder("На главной:  ");
+        hp.setSpan(new android.text.style.ForegroundColorSpan(Ui.text2), 0, hp.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        int s0 = hp.length();
+        hp.append(b).append(" → ").append(to != null ? to : "—");
+        hp.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), s0, hp.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        int s1 = hp.length();
+        hp.append("   · изменить");
+        hp.setSpan(new android.text.style.ForegroundColorSpan(Ui.text2), s1, hp.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        homePair.setText(hp);
         list.removeAllViews();
         values.clear();
         if (!Fx.ready()) {
@@ -200,7 +227,7 @@ final class FxDialog {
         }
         for (String code : Fx.targets()) {
             if (code.equals(b)) continue;
-            list.addView(row(code));
+            list.addView(row(code, code.equals(to)));
         }
         updateValues();
         long at = Fx.updatedAt();
@@ -208,7 +235,7 @@ final class FxDialog {
         status.setText("Курсы: ExchangeRate-API" + (when.isEmpty() ? "" : " · обновлены " + when));
     }
 
-    private View row(String code) {
+    private View row(String code, boolean onHome) {
         LinearLayout r = new LinearLayout(c);
         r.setOrientation(LinearLayout.HORIZONTAL);
         r.setGravity(Gravity.CENTER_VERTICAL);
@@ -219,7 +246,7 @@ final class FxDialog {
         LinearLayout names = new LinearLayout(c);
         names.setOrientation(LinearLayout.VERTICAL);
         names.addView(Ui.text(c, code, 15, Ui.text, true));
-        TextView n = Ui.text(c, Fx.name(code), 12, Ui.text2, false);
+        TextView n = Ui.text(c, Fx.name(code) + (onHome ? "  ·  на главной" : ""), 12, Ui.text2, false);
         n.setSingleLine(true);
         n.setEllipsize(android.text.TextUtils.TruncateAt.END);
         names.addView(n);
